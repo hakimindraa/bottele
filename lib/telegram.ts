@@ -12,10 +12,11 @@ export interface TelegramInlineButton {
 
 export async function sendTelegram(
   text: string,
-  inlineButtons?: TelegramInlineButton[][]
+  inlineButtons?: TelegramInlineButton[][],
+  customChatId?: string | number
 ): Promise<void> {
   const token = process.env.TELEGRAM_BOT_TOKEN;
-  const chatId = process.env.TELEGRAM_CHAT_ID;
+  const chatId = customChatId || process.env.TELEGRAM_CHAT_ID;
 
   if (!token || !chatId) {
     throw new Error("TELEGRAM_BOT_TOKEN atau TELEGRAM_CHAT_ID belum diatur dalam environment variables.");

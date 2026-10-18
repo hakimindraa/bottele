@@ -13,6 +13,8 @@ export interface ArticleRow {
   summary: string | null;
   sent_at: string | Date | null;
   created_at: string | Date;
+  category?: string;
+  is_priority?: boolean;
 }
 
 export interface DigestResult {
@@ -28,6 +30,15 @@ export async function runDailyDigest(): Promise<DigestResult> {
   let sent = 0;
   let failed = 0;
 
+  // Ambil daftar kata kunci prioritas
+  let priorityKeywords: string[] = [];
+  try {
+    const kwRows = await sql`SELECT keyword FROM priority_keywords;`;
+    priorityKeywords = kwRows.map((r) => String(r.keyword).toLowerCase().trim());
+  } catch (e) {
+    console.warn("Gagal memuat priority_keywords:", e);
+  }
+
   // a. Sisir feed RSS terbaru
   const items = await fetchRecentItems();
   fetched = items.length;
@@ -40,11 +51,15 @@ export async function runDailyDigest(): Promise<DigestResult> {
   // b. Simpan artikel baru ke database intelijen
   for (const item of items) {
     try {
+      // Cek apakah judul atau snippet mengandung kata kunci prioritas
+      const textToScan = `${item.title} ${item.snippet}`.toLowerCase();
+      const isPriority = priorityKeywords.some((kw) => kw && textToScan.includes(kw));
+
       const res = await sql`
-        INSERT INTO articles (source, title, url, published_at)
-        VALUES (${item.source}, ${item.title}, ${item.url}, ${item.publishedAt.toISOString()})
+        INSERT INTO articles (source, title, url, published_at, is_priority)
+        VALUES (${item.source}, ${item.title}, ${item.url}, ${item.publishedAt.toISOString()}, ${isPriority})
         ON CONFLICT (url) DO NOTHING
-        RETURNING id
+        RETURNING id;
       `;
       if (res && res.length > 0) {
         inserted++;
@@ -54,28 +69,38 @@ export async function runDailyDigest(): Promise<DigestResult> {
     }
   }
 
-  // c. Ambil antrean berita terhangat yang belum diproses
+  // c. Ambil antrean berita terhangat yang belum diproses (utamakan berita berstatus priority)
   const maxArticles = Number(process.env.MAX_ARTICLES_PER_RUN) || 3;
   const pendingArticles = (await sql`
-    SELECT * FROM articles
+    SELECT id, source, title, url, published_at, summary, sent_at, created_at, category, is_priority
+    FROM articles
     WHERE sent_at IS NULL
-    ORDER BY published_at DESC NULLS LAST
-    LIMIT ${maxArticles}
+    ORDER BY is_priority DESC, published_at DESC NULLS LAST
+    LIMIT ${maxArticles};
   `) as unknown as ArticleRow[];
 
-  // d, e, f. Bedah fakta kritis, transfer ke AdaFakta, dan tembak Telegram Pager
+  // d, e, f. Bedah fakta kritis, klasifikasi kategori, transfer ke AdaFakta, dan tembak Telegram Pager
   for (const article of pendingArticles) {
     try {
       let currentSummary = article.summary;
+      let currentCategory = article.category || "UMUM";
+
+      // Cek apakah artikel prioritas
+      const textToScan = `${article.title} ${currentSummary || ""}`.toLowerCase();
+      const isPriority = article.is_priority || priorityKeywords.some((kw) => kw && textToScan.includes(kw));
 
       // Jika belum dianalisis, jalankan AI jurnalis investigasi
       if (!currentSummary || !currentSummary.trim()) {
         const snippet = snippetMap.get(article.url) || article.title;
-        currentSummary = await summarize({
+        const analysis = await summarize({
           title: article.title,
           snippet,
           url: article.url,
+          isPriority,
         });
+
+        currentSummary = analysis.summary;
+        currentCategory = analysis.category;
 
         if (!currentSummary || !currentSummary.trim()) {
           throw new Error(`Ringkasan kosong untuk artikel id ${article.id}`);
@@ -83,8 +108,8 @@ export async function runDailyDigest(): Promise<DigestResult> {
 
         await sql`
           UPDATE articles
-          SET summary = ${currentSummary}
-          WHERE id = ${article.id}
+          SET summary = ${currentSummary}, category = ${currentCategory}, is_priority = ${isPriority}
+          WHERE id = ${article.id};
         `;
       }
 
@@ -95,13 +120,14 @@ export async function runDailyDigest(): Promise<DigestResult> {
         url: article.url,
         published_at: article.published_at,
         summary: currentSummary,
+        category: currentCategory,
       });
 
       // Format Laporan Intelijen Redaksi untuk Telegram Pager
       const safeTitle = escapeHtml(article.title);
       const safeSummary = escapeHtml(currentSummary);
       const safeSource = escapeHtml(article.source);
-      const safeHref = article.url.replace(/&/g, "&amp;");
+      const safeCategory = escapeHtml(currentCategory);
       
       const publishDateStr = article.published_at
         ? new Date(article.published_at).toLocaleString("id-ID", {
@@ -111,12 +137,17 @@ export async function runDailyDigest(): Promise<DigestResult> {
           })
         : "-";
 
+      const headerTitle = isPriority
+        ? `🔥 <b>[ULTRA HIGH PRIORITY] ATENSI REDAKSI KHUSUS</b>`
+        : `🚨 <b>[ATENSI REDAKSI] LAPORAN JURNALIS AI</b>`;
+
       const message = [
-        `🚨 <b>[ATENSI REDAKSI] LAPORAN JURNALIS AI</b>`,
+        headerTitle,
         `━━━━━━━━━━━━━━━━━━━━━━━━━━━━`,
-        `📰 <b>Kanal</b>  : ${safeSource}`,
-        `🕒 <b>Terbit</b> : ${publishDateStr} WIB`,
-        `📌 <b>Isu</b>    : <b>${safeTitle}</b>`,
+        `📰 <b>Kanal</b>   : ${safeSource}`,
+        `🏷️ <b>Rubrik</b>  : #${safeCategory}`,
+        `🕒 <b>Terbit</b>  : ${publishDateStr} WIB`,
+        `📌 <b>Isu</b>     : <b>${safeTitle}</b>`,
         ``,
         `📝 <b>Bedah Fakta & Urgensi:</b>`,
         `${safeSummary}`,
@@ -124,7 +155,7 @@ export async function runDailyDigest(): Promise<DigestResult> {
         `📊 <b>Status Distribusi:</b>`,
         adafaktaSuccess
           ? `✅ <i>Tersimpan di Meja Redaksi AdaFakta</i>`
-          : `⚠️ <i>Disimpan lokal (Menunggu sync AdaFakta)</i>`,
+          : `⚠️ <i>Disimpan lokal di radar bot</i>`,
         `━━━━━━━━━━━━━━━━━━━━━━━━━━━━`,
       ].join("\n");
 
@@ -139,19 +170,28 @@ export async function runDailyDigest(): Promise<DigestResult> {
       // Kirim Pager Alert ke Telegram
       await sendTelegram(message, buttons);
 
-      // Tandai artikel telah berhasil diproses
+      // Tandai sudah terkirim
       await sql`
         UPDATE articles
         SET sent_at = now()
-        WHERE id = ${article.id}
+        WHERE id = ${article.id};
       `;
 
       sent++;
     } catch (error) {
+      console.error(`Gagal memproses draf artikel id ${article.id}:`, error);
       failed++;
-      console.error(`Gagal memproses artikel id ${article.id}:`, error);
     }
+  }
+
+  // g. Jalankan pembersihan otomatis data basi (Auto-Prune Retention)
+  try {
+    const { pruneOldArticles } = await import("@/lib/retention");
+    await pruneOldArticles();
+  } catch (pruneErr) {
+    console.warn("[Auto-Prune] Gagal menjalankan pemangkasan otomatis:", pruneErr);
   }
 
   return { fetched, inserted, sent, failed };
 }
+

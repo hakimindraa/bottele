@@ -4,13 +4,13 @@ export interface AdafaktaPayload {
   url: string;
   published_at?: string | Date | null;
   summary: string;
+  category?: string;
 }
 
 export async function sendToAdafakta(payload: AdafaktaPayload): Promise<boolean> {
   const apiUrl = process.env.ADAFAKTA_API_URL;
   const apiKey = process.env.ADAFAKTA_API_KEY;
 
-  // Jika URL atau API Key belum diatur, lewati dengan aman
   if (!apiUrl || !apiKey) {
     return false;
   }
@@ -28,6 +28,7 @@ export async function sendToAdafakta(payload: AdafaktaPayload): Promise<boolean>
         url: payload.url,
         published_at: payload.published_at,
         summary: payload.summary,
+        category: payload.category || "UMUM",
       }),
     });
 
