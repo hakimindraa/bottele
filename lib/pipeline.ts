@@ -2,6 +2,7 @@ import { sql } from "@/lib/db";
 import { fetchRecentItems } from "@/lib/rss";
 import { summarize } from "@/lib/summarize";
 import { escapeHtml, sendTelegram } from "@/lib/telegram";
+import { sendToAdafakta } from "@/lib/adafakta";
 
 export interface ArticleRow {
   id: number;
@@ -62,7 +63,7 @@ export async function runDailyDigest(): Promise<DigestResult> {
     LIMIT ${maxArticles}
   `) as unknown as ArticleRow[];
 
-  // d, e, f. Ringkas, kirim ke Telegram, dan catat status pengiriman
+  // d, e, f. Ringkas, kirim ke Telegram & adafakta.web.id, dan catat status pengiriman
   for (const article of pendingArticles) {
     try {
       let currentSummary = article.summary;
@@ -86,6 +87,15 @@ export async function runDailyDigest(): Promise<DigestResult> {
           WHERE id = ${article.id}
         `;
       }
+
+      // Transfer draf artikel ke adafakta.web.id jika dikonfigurasi
+      await sendToAdafakta({
+        title: article.title,
+        source: article.source,
+        url: article.url,
+        published_at: article.published_at,
+        summary: currentSummary,
+      });
 
       // Format pesan Telegram
       const safeTitle = escapeHtml(article.title);
