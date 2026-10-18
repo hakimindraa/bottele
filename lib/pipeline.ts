@@ -1,7 +1,7 @@
 import { sql } from "@/lib/db";
 import { fetchRecentItems } from "@/lib/rss";
 import { summarize } from "@/lib/summarize";
-import { escapeHtml, sendTelegram } from "@/lib/telegram";
+import { escapeHtml, sendTelegram, TelegramInlineButton } from "@/lib/telegram";
 import { sendToAdafakta } from "@/lib/adafakta";
 
 export interface ArticleRow {
@@ -28,7 +28,7 @@ export async function runDailyDigest(): Promise<DigestResult> {
   let sent = 0;
   let failed = 0;
 
-  // a. Panggil fetchRecentItems()
+  // a. Sisir feed RSS terbaru
   const items = await fetchRecentItems();
   fetched = items.length;
 
@@ -37,7 +37,7 @@ export async function runDailyDigest(): Promise<DigestResult> {
     snippetMap.set(item.url, item.snippet);
   }
 
-  // b. Simpan artikel baru ke database, lewati yang URL-nya sudah ada
+  // b. Simpan artikel baru ke database intelijen
   for (const item of items) {
     try {
       const res = await sql`
@@ -54,7 +54,7 @@ export async function runDailyDigest(): Promise<DigestResult> {
     }
   }
 
-  // c. Ambil artikel yang belum dikirim
+  // c. Ambil antrean berita terhangat yang belum diproses
   const maxArticles = Number(process.env.MAX_ARTICLES_PER_RUN) || 3;
   const pendingArticles = (await sql`
     SELECT * FROM articles
@@ -63,12 +63,12 @@ export async function runDailyDigest(): Promise<DigestResult> {
     LIMIT ${maxArticles}
   `) as unknown as ArticleRow[];
 
-  // d, e, f. Ringkas, kirim ke Telegram & adafakta.web.id, dan catat status pengiriman
+  // d, e, f. Bedah fakta kritis, transfer ke AdaFakta, dan tembak Telegram Pager
   for (const article of pendingArticles) {
     try {
       let currentSummary = article.summary;
 
-      // Jika summary kosong, buat ringkasan lalu simpan ke database
+      // Jika belum dianalisis, jalankan AI jurnalis investigasi
       if (!currentSummary || !currentSummary.trim()) {
         const snippet = snippetMap.get(article.url) || article.title;
         currentSummary = await summarize({
@@ -88,8 +88,8 @@ export async function runDailyDigest(): Promise<DigestResult> {
         `;
       }
 
-      // Transfer draf artikel ke adafakta.web.id jika dikonfigurasi
-      await sendToAdafakta({
+      // Transfer draf intelijen ke meja redaksi adafakta.web.id
+      const adafaktaSuccess = await sendToAdafakta({
         title: article.title,
         source: article.source,
         url: article.url,
@@ -97,18 +97,49 @@ export async function runDailyDigest(): Promise<DigestResult> {
         summary: currentSummary,
       });
 
-      // Format pesan Telegram
+      // Format Laporan Intelijen Redaksi untuk Telegram Pager
       const safeTitle = escapeHtml(article.title);
       const safeSummary = escapeHtml(currentSummary);
       const safeSource = escapeHtml(article.source);
       const safeHref = article.url.replace(/&/g, "&amp;");
+      
+      const publishDateStr = article.published_at
+        ? new Date(article.published_at).toLocaleString("id-ID", {
+            timeZone: "Asia/Bangkok",
+            dateStyle: "medium",
+            timeStyle: "short",
+          })
+        : "-";
 
-      const message = `<b>${safeTitle}</b>\n\n${safeSummary}\n\n<a href="${safeHref}">Baca selengkapnya</a>\n<i>Sumber: ${safeSource}</i>`;
+      const message = [
+        `🚨 <b>[ATENSI REDAKSI] LAPORAN JURNALIS AI</b>`,
+        `━━━━━━━━━━━━━━━━━━━━━━━━━━━━`,
+        `📰 <b>Kanal</b>  : ${safeSource}`,
+        `🕒 <b>Terbit</b> : ${publishDateStr} WIB`,
+        `📌 <b>Isu</b>    : <b>${safeTitle}</b>`,
+        ``,
+        `📝 <b>Bedah Fakta & Urgensi:</b>`,
+        `${safeSummary}`,
+        ``,
+        `📊 <b>Status Distribusi:</b>`,
+        adafaktaSuccess
+          ? `✅ <i>Tersimpan di Meja Redaksi AdaFakta</i>`
+          : `⚠️ <i>Disimpan lokal (Menunggu sync AdaFakta)</i>`,
+        `━━━━━━━━━━━━━━━━━━━━━━━━━━━━`,
+      ].join("\n");
 
-      // Kirim ke Telegram
-      await sendTelegram(message);
+      // Tombol Cepat Inline Keyboard
+      const buttons: TelegramInlineButton[][] = [
+        [
+          { text: "🔗 Sumber Berita Asli", url: article.url },
+          { text: "📝 Meja Redaksi AdaFakta", url: "https://www.adafakta.web.id/admin/jurnalis" },
+        ],
+      ];
 
-      // Tandai artikel telah berhasil dikirim
+      // Kirim Pager Alert ke Telegram
+      await sendTelegram(message, buttons);
+
+      // Tandai artikel telah berhasil diproses
       await sql`
         UPDATE articles
         SET sent_at = now()
