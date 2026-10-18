@@ -8,7 +8,23 @@ export interface RecentItem {
   snippet: string;
 }
 
-const parser = new Parser();
+const parser = new Parser({
+  headers: {
+    "User-Agent":
+      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+  },
+});
+
+function cleanSourceName(rawTitle?: string, fallbackUrl?: string): string {
+  const str = rawTitle?.trim() || fallbackUrl || "Berita";
+  if (str.includes("CNBC Indonesia")) return "CNBC Indonesia";
+  if (str.includes("ANTARA")) return "Antara News";
+  if (str.includes("BBC News Indonesia")) return "BBC Indonesia";
+  if (str === "BBC News" || str.includes("BBC")) return "BBC World";
+  if (str.includes("DailySocial")) return "DailySocial";
+  if (str.includes("TechCrunch")) return "TechCrunch";
+  return str;
+}
 
 export async function fetchRecentItems(): Promise<RecentItem[]> {
   const feedUrls = (process.env.RSS_FEEDS || "")
@@ -22,7 +38,7 @@ export async function fetchRecentItems(): Promise<RecentItem[]> {
   for (const feedUrl of feedUrls) {
     try {
       const feed = await parser.parseURL(feedUrl);
-      const source = feed.title?.trim() || feedUrl;
+      const source = cleanSourceName(feed.title, feedUrl);
 
       for (const item of feed.items || []) {
         const title = item.title?.trim();
