@@ -64,10 +64,37 @@ body {
   background-color: var(--accent-red);
   border-radius: 50%;
   box-shadow: 0 0 10px var(--accent-red);
-  animation: pulse 1.5s infinite;
+  animation: pulse-red 1.5s infinite;
 }
 
-@keyframes pulse {
+.pulse-dot.pulse-active {
+  background-color: var(--accent-green);
+  box-shadow: 0 0 10px var(--accent-green);
+  animation: pulse-green 1.5s infinite;
+}
+
+.pulse-dot.pulse-paused {
+  background-color: var(--accent-red);
+  box-shadow: 0 0 10px var(--accent-red);
+  animation: none;
+}
+
+@keyframes pulse-green {
+  0% {
+    transform: scale(0.95);
+    box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7);
+  }
+  70% {
+    transform: scale(1.1);
+    box-shadow: 0 0 0 8px rgba(16, 185, 129, 0);
+  }
+  100% {
+    transform: scale(0.95);
+    box-shadow: 0 0 0 0 rgba(16, 185, 129, 0);
+  }
+}
+
+@keyframes pulse-red {
   0% {
     transform: scale(0.95);
     box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.7);
@@ -93,7 +120,51 @@ body {
 .status-meta {
   display: flex;
   flex-wrap: wrap;
+  align-items: center;
   gap: 8px;
+}
+
+.btn-bot-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  border-radius: 6px;
+  font-size: 0.78rem;
+  font-weight: 700;
+  cursor: pointer;
+  font-family: monospace;
+  transition: all 0.2s ease;
+  outline: none;
+}
+
+.btn-bot-switch:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.btn-bot-switch.switch-on {
+  background-color: rgba(16, 185, 129, 0.15);
+  border: 1px solid rgba(16, 185, 129, 0.4);
+  color: #34d399;
+}
+
+.btn-bot-switch.switch-on:hover:not(:disabled) {
+  background-color: rgba(16, 185, 129, 0.28);
+  border-color: #34d399;
+  transform: translateY(-1px);
+}
+
+.btn-bot-switch.switch-off {
+  background-color: rgba(239, 68, 68, 0.15);
+  border: 1px solid rgba(239, 68, 68, 0.4);
+  color: #f87171;
+}
+
+.btn-bot-switch.switch-off:hover:not(:disabled) {
+  background-color: rgba(239, 68, 68, 0.28);
+  border-color: #f87171;
+  transform: translateY(-1px);
 }
 
 .meta-badge {
@@ -352,9 +423,9 @@ body {
 .radar-header {
   display: flex;
   flex-wrap: wrap;
-  align-items: baseline;
+  align-items: center;
   justify-content: space-between;
-  gap: 8px;
+  gap: 12px;
   border-bottom: 1px solid var(--border-subtle);
   padding-bottom: 12px;
 }
@@ -370,6 +441,77 @@ body {
 .radar-subtitle {
   font-size: 0.82rem;
   color: var(--text-dim);
+}
+
+.batch-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.batch-select-all {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text-bright);
+  user-select: none;
+}
+
+.custom-checkbox {
+  width: 17px;
+  height: 17px;
+  cursor: pointer;
+  accent-color: var(--accent-blue);
+}
+
+.btn-batch-delete {
+  background-color: rgba(239, 68, 68, 0.15);
+  border: 1px solid rgba(239, 68, 68, 0.4);
+  color: #fca5a5;
+  padding: 6px 14px;
+  border-radius: 6px;
+  font-size: 0.82rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.btn-batch-delete:hover:not(:disabled) {
+  background-color: #ef4444;
+  color: #ffffff;
+  border-color: #ef4444;
+}
+
+.btn-batch-delete:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.btn-clear-all {
+  background-color: #1e293b;
+  border: 1px solid var(--border-subtle);
+  color: var(--text-muted);
+  padding: 6px 14px;
+  border-radius: 6px;
+  font-size: 0.82rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.btn-clear-all:hover:not(:disabled) {
+  border-color: var(--border-accent);
+  color: var(--text-bright);
+  background-color: #334155;
+}
+
+.btn-clear-all:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
 }
 
 .empty-radar {
@@ -398,12 +540,31 @@ body {
   border: 1px solid var(--border-subtle);
   border-radius: 12px;
   padding: 22px;
-  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease, background-color 0.2s ease;
 }
 
 .intel-card:hover {
   border-color: var(--border-accent);
   box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
+}
+
+.card-selected {
+  border-color: rgba(56, 189, 248, 0.4) !important;
+  background-color: #111d33 !important;
+}
+
+.intel-left-wrap {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.card-check {
+  width: 18px;
+  height: 18px;
+  cursor: pointer;
+  accent-color: var(--accent-blue);
 }
 
 .intel-top {

@@ -24,9 +24,11 @@ export interface MetricStats {
 export default function CommandCenterView({
   initialArticles,
   metrics,
+  initialBotActive,
 }: {
   initialArticles: ArticleItem[];
   metrics: MetricStats;
+  initialBotActive: boolean;
 }) {
   const router = useRouter();
   const [selectedSource, setSelectedSource] = useState<string>("ALL");
@@ -34,13 +36,21 @@ export default function CommandCenterView({
   const [isScouting, setIsScouting] = useState<boolean>(false);
   const [scoutMessage, setScoutMessage] = useState<string | null>(null);
 
-  // Daftar sumber unik untuk filter pill
+  // Saklar Bot Aktif / Jeda
+  const [botActive, setBotActive] = useState<boolean>(initialBotActive);
+  const [isTogglingBot, setIsTogglingBot] = useState<boolean>(false);
+
+  // Seleksi Massal (Pilih Semua & Hapus)
+  const [selectedIds, setSelectedIds] = useState<number[]>([]);
+  const [isDeleting, setIsDeleting] = useState<boolean>(false);
+
+  // Sumber unik untuk filter pills
   const sources = [
     "ALL",
     ...Array.from(new Set(initialArticles.map((a) => a.source))).filter(Boolean),
   ];
 
-  // Filter artikel berdasarkan sumber & pencarian
+  // Filter artikel
   const filteredArticles = initialArticles.filter((article) => {
     const matchesSource =
       selectedSource === "ALL" || article.source === selectedSource;
@@ -51,6 +61,110 @@ export default function CommandCenterView({
     return matchesSource && matchesSearch;
   });
 
+  const allFilteredIds = filteredArticles.map((a) => a.id);
+  const isAllSelected =
+    allFilteredIds.length > 0 &&
+    allFilteredIds.every((id) => selectedIds.includes(id));
+
+  // Toggle saklar Bot Active / Pause
+  async function handleToggleBot() {
+    setIsTogglingBot(true);
+    try {
+      const res = await fetch("/api/settings/toggle-bot", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ active: !botActive }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setBotActive(data.active);
+        setScoutMessage(data.message);
+      }
+    } catch {
+      alert("Gagal mengubah status saklar bot.");
+    } finally {
+      setIsTogglingBot(false);
+    }
+  }
+
+  // Pilih Semua
+  function handleToggleSelectAll() {
+    if (isAllSelected) {
+      setSelectedIds([]);
+    } else {
+      setSelectedIds(allFilteredIds);
+    }
+  }
+
+  // Pilih Satu per Satu
+  function handleToggleSelectOne(id: number) {
+    if (selectedIds.includes(id)) {
+      setSelectedIds(selectedIds.filter((item) => item !== id));
+    } else {
+      setSelectedIds([...selectedIds, id]);
+    }
+  }
+
+  // Hapus Terpilih
+  async function handleDeleteSelected() {
+    if (selectedIds.length === 0) return;
+    const confirmDelete = window.confirm(
+      `Yakin ingin menghapus ${selectedIds.length} berita terpilih dari radar?`
+    );
+    if (!confirmDelete) return;
+
+    setIsDeleting(true);
+    try {
+      const res = await fetch("/api/articles/delete", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ids: selectedIds }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setScoutMessage(`🗑️ ${data.message}`);
+        setSelectedIds([]);
+        router.refresh();
+      } else {
+        alert(data.error || "Gagal menghapus berita terpilih");
+      }
+    } catch {
+      alert("Terjadi kesalahan jaringan saat menghapus.");
+    } finally {
+      setIsDeleting(false);
+    }
+  }
+
+  // Bersihkan Seluruh Radar
+  async function handleClearAllRadar() {
+    const confirmClear = window.confirm(
+      "PERINGATAN: Yakin ingin mengosongkan SELURUH radar berita? Semua riwayat radar di bot akan dibersihkan."
+    );
+    if (!confirmClear) return;
+
+    setIsDeleting(true);
+    try {
+      const res = await fetch("/api/articles/delete", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ all: true }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setScoutMessage("🧹 Seluruh radar berita telah berhasil dikosongkan.");
+        setSelectedIds([]);
+        router.refresh();
+      } else {
+        alert(data.error || "Gagal membersihkan radar");
+      }
+    } catch {
+      alert("Terjadi kesalahan jaringan saat membersihkan radar.");
+    } finally {
+      setIsDeleting(false);
+    }
+  }
+
+  // Manual Scout Trigger
   async function handleTriggerScout() {
     setIsScouting(true);
     setScoutMessage(null);
@@ -65,7 +179,7 @@ export default function CommandCenterView({
       } else {
         setScoutMessage(`⚠️ Gagal menjalankan liputan: ${data.message || data.error}`);
       }
-    } catch (err) {
+    } catch {
       setScoutMessage("❌ Kesalahan jaringan saat memicu liputan.");
     } finally {
       setIsScouting(false);
@@ -74,13 +188,26 @@ export default function CommandCenterView({
 
   return (
     <div className="command-center">
-      {/* 1. TOP LIVE STATUS BAR */}
+      {/* 1. TOP LIVE STATUS BAR DENGAN SAKLAR ON/OFF */}
       <div className="status-bar">
         <div className="status-indicator">
-          <span className="pulse-dot"></span>
-          <span className="status-title">AUTONOMOUS SCOUT RADAR: ACTIVE</span>
+          <span className={`pulse-dot ${botActive ? "pulse-active" : "pulse-paused"}`}></span>
+          <span className="status-title">
+            {botActive ? "AUTONOMOUS SCOUT RADAR: ACTIVE" : "AUTONOMOUS SCOUT RADAR: PAUSED / JEDA"}
+          </span>
         </div>
+
         <div className="status-meta">
+          {/* SAKLAR TOGGLE BOT ON / OFF */}
+          <button
+            onClick={handleToggleBot}
+            disabled={isTogglingBot}
+            className={`btn-bot-switch ${botActive ? "switch-on" : "switch-off"}`}
+            title="Klik untuk mengaktifkan atau menjeda bot"
+          >
+            {isTogglingBot ? "Memproses..." : botActive ? "🟢 SAKLAR: BOT AKTIF" : "🔴 SAKLAR: BOT JEDA (OFF)"}
+          </button>
+
           <span className="meta-badge pulse-green">● ADAFAKTA.WEB.ID SYNCED</span>
           <span className="meta-badge pulse-blue">● TELEGRAM PAGER ONLINE</span>
           <span className="meta-badge">PERSONA: KRITIS & TEGAS</span>
@@ -163,7 +290,7 @@ export default function CommandCenterView({
         </div>
       </div>
 
-      {/* ALERT MESSAGE */}
+      {/* ALERT TOAST */}
       {scoutMessage && (
         <div className="scout-toast">
           <span>{scoutMessage}</span>
@@ -188,20 +315,55 @@ export default function CommandCenterView({
         </div>
       </div>
 
-      {/* 5. RADAR LIVE STREAM / INTELLIGENCE FEED */}
+      {/* 5. RADAR LIVE STREAM DENGAN BATCH SELECT & DELETE */}
       <div className="radar-section">
         <div className="radar-header">
-          <h2 className="radar-title">📡 RADAR INTELIJEN LIPUTAN ({filteredArticles.length} Isu)</h2>
-          <span className="radar-subtitle">
-            Urutan investigasi terbaru siap disetor ke redaksi
-          </span>
+          <div>
+            <h2 className="radar-title">📡 RADAR INTELIJEN LIPUTAN ({filteredArticles.length} Isu)</h2>
+            <span className="radar-subtitle">
+              Urutan investigasi terbaru siap disetor ke redaksi
+            </span>
+          </div>
+
+          {/* BATCH ACTION CONTROLS */}
+          {filteredArticles.length > 0 && (
+            <div className="batch-actions">
+              <label className="batch-select-all">
+                <input
+                  type="checkbox"
+                  checked={isAllSelected}
+                  onChange={handleToggleSelectAll}
+                  className="custom-checkbox"
+                />
+                <span>Pilih Semua</span>
+              </label>
+
+              {selectedIds.length > 0 && (
+                <button
+                  onClick={handleDeleteSelected}
+                  disabled={isDeleting}
+                  className="btn-batch-delete"
+                >
+                  🗑️ Hapus ({selectedIds.length} Terpilih)
+                </button>
+              )}
+
+              <button
+                onClick={handleClearAllRadar}
+                disabled={isDeleting}
+                className="btn-clear-all"
+              >
+                🧹 Bersihkan Semua
+              </button>
+            </div>
+          )}
         </div>
 
         {filteredArticles.length === 0 ? (
           <div className="empty-radar">
-            <p>Tidak ada berita yang cocok dengan kriteria filter saat ini.</p>
+            <p>Tidak ada berita di radar saat ini.</p>
             <p className="empty-sub">
-              Klik <strong>Luncurkan Liputan Sekarang</strong> untuk mengambil berita baru.
+              Klik <strong>Luncurkan Liputan Sekarang</strong> untuk mulai menyisir berita baru.
             </p>
           </div>
         ) : (
@@ -216,15 +378,28 @@ export default function CommandCenterView({
                   })
                 : "-";
 
+              const isChecked = selectedIds.includes(article.id);
+
               return (
-                <div key={article.id} className="intel-card">
+                <div
+                  key={article.id}
+                  className={`intel-card ${isChecked ? "card-selected" : ""}`}
+                >
                   <div className="intel-top">
-                    <div className="intel-badges">
-                      <span className="badge-urgency">
-                        {idx < 3 ? "🚨 ATENSI KRITIS" : "⚡ ISU UTAMA"}
-                      </span>
-                      <span className="badge-source">{article.source}</span>
-                      <span className="badge-date">🕒 {dateStr} WIB</span>
+                    <div className="intel-left-wrap">
+                      <input
+                        type="checkbox"
+                        checked={isChecked}
+                        onChange={() => handleToggleSelectOne(article.id)}
+                        className="custom-checkbox card-check"
+                      />
+                      <div className="intel-badges">
+                        <span className="badge-urgency">
+                          {idx < 3 ? "🚨 ATENSI KRITIS" : "⚡ ISU UTAMA"}
+                        </span>
+                        <span className="badge-source">{article.source}</span>
+                        <span className="badge-date">🕒 {dateStr} WIB</span>
+                      </div>
                     </div>
 
                     <div className="intel-sync-status">

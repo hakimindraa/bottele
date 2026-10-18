@@ -1,4 +1,5 @@
 import { sql } from "@/lib/db";
+import { isBotActive } from "@/lib/settings";
 import CommandCenterView, {
   ArticleItem,
   MetricStats,
@@ -20,7 +21,11 @@ export default async function Page() {
     activeFeedsCount: activeFeeds.length || 6,
   };
 
+  let botActive = true;
+
   try {
+    botActive = await isBotActive();
+
     const rows = await sql`
       SELECT id, source, title, url, published_at, summary, sent_at, created_at
       FROM articles
@@ -42,7 +47,11 @@ export default async function Page() {
 
   return (
     <main className="main-wrapper">
-      <CommandCenterView initialArticles={articles} metrics={metrics} />
+      <CommandCenterView
+        initialArticles={articles}
+        metrics={metrics}
+        initialBotActive={botActive}
+      />
     </main>
   );
 }
