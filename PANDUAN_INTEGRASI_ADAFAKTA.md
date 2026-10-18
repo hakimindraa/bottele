@@ -456,3 +456,172 @@ export default function JurnalisClientView({
   );
 }
 ```
+
+---
+
+## 8. FITUR PILIH SEMUA & HAPUS MASSAL DRAF DI ADAFAKTA (BATCH DELETE)
+
+Jika meja redaksi AdaFakta ingin memilih banyak draf sekaligus dan menghapusnya dalam satu klik (atau mengosongkan seluruh draf), berikut adalah 2 langkah mudahnya:
+
+### Langkah A: Buat API Route `app/api/admin/jurnalis/delete/route.ts`
+
+```typescript
+import { NextResponse } from "next/server";
+import { sql } from "@/lib/db";
+
+export const dynamic = "force-dynamic";
+
+export async function POST(req: Request) {
+  try {
+    const body = await req.json();
+    const { ids, all } = body;
+
+    // 1. Hapus seluruh draf
+    if (all === true) {
+      await sql`DELETE FROM jurnalis_drafts;`;
+      return NextResponse.json({
+        success: true,
+        message: "Seluruh draf jurnalis berhasil dibersihkan",
+      });
+    }
+
+    // 2. Hapus draf terpilih berdasarkan ID
+    if (Array.isArray(ids) && ids.length > 0) {
+      const validIds = ids.map((id) => Number(id)).filter((id) => !isNaN(id));
+      if (validIds.length === 0) {
+        return NextResponse.json({ error: "ID draf tidak valid" }, { status: 400 });
+      }
+
+      const placeholders = validIds.map((_, i) => `$${i + 1}`).join(",");
+      await sql.query(`DELETE FROM jurnalis_drafts WHERE id IN (${placeholders})`, validIds);
+
+      return NextResponse.json({
+        success: true,
+        count: validIds.length,
+        message: `${validIds.length} draf berhasil dihapus`,
+      });
+    }
+
+    return NextResponse.json({ error: "Parameter ids atau all tidak valid" }, { status: 400 });
+  } catch (error) {
+    console.error("Gagal menghapus draf jurnalis:", error);
+    return NextResponse.json(
+      { error: "Internal Server Error", details: String(error) },
+      { status: 500 }
+    );
+  }
+}
+```
+
+### Langkah B: Tambahkan Fitur Checkbox & Hapus di `DraftsClient.tsx`
+
+Tambahkan state dan handler berikut pada komponen `DraftsClient`:
+
+```typescript
+// State seleksi
+const [selectedIds, setSelectedIds] = useState<number[]>([]);
+const [isDeleting, setIsDeleting] = useState<boolean>(false);
+
+const allIds = drafts.map((d) => d.id);
+const isAllSelected = allIds.length > 0 && allIds.every((id) => selectedIds.includes(id));
+
+function handleToggleSelectAll() {
+  if (isAllSelected) {
+    setSelectedIds([]);
+  } else {
+    setSelectedIds(allIds);
+  }
+}
+
+function handleToggleSelectOne(id: number) {
+  if (selectedIds.includes(id)) {
+    setSelectedIds(selectedIds.filter((item) => item !== id));
+  } else {
+    setSelectedIds([...selectedIds, id]);
+  }
+}
+
+async function handleDeleteSelected() {
+  if (selectedIds.length === 0) return;
+  if (!confirm(`Hapus ${selectedIds.length} draf terpilih?`)) return;
+
+  setIsDeleting(true);
+  try {
+    const res = await fetch("/api/admin/jurnalis/delete", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ids: selectedIds }),
+    });
+    const json = await res.json();
+    if (json.success) {
+      setDrafts((prev) => prev.filter((d) => !selectedIds.includes(d.id)));
+      setSelectedIds([]);
+    } else {
+      alert(json.error || "Gagal menghapus draf");
+    }
+  } catch (e) {
+    alert("Terjadi kesalahan jaringan");
+  } finally {
+    setIsDeleting(false);
+  }
+}
+
+async function handleClearAll() {
+  if (!confirm("PERINGATAN: Kosongkan SELURUH draf jurnalis?")) return;
+
+  setIsDeleting(true);
+  try {
+    const res = await fetch("/api/admin/jurnalis/delete", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ all: true }),
+    });
+    const json = await res.json();
+    if (json.success) {
+      setDrafts([]);
+      setSelectedIds([]);
+    } else {
+      alert(json.error || "Gagal mengosongkan draf");
+    }
+  } catch (e) {
+    alert("Terjadi kesalahan jaringan");
+  } finally {
+    setIsDeleting(false);
+  }
+}
+```
+
+Dan di atas grid kartu draf, pasang baris tombol aksi:
+```jsx
+<div className="flex items-center justify-between pb-3 border-b mb-4">
+  <label className="flex items-center gap-2 cursor-pointer text-sm font-medium">
+    <input
+      type="checkbox"
+      checked={isAllSelected}
+      onChange={handleToggleSelectAll}
+      className="w-4 h-4 rounded text-blue-600 cursor-pointer"
+    />
+    <span>Pilih Semua ({selectedIds.length} dipilih)</span>
+  </label>
+
+  <div className="flex gap-2">
+    {selectedIds.length > 0 && (
+      <button
+        onClick={handleDeleteSelected}
+        disabled={isDeleting}
+        className="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white rounded-lg text-xs font-semibold"
+      >
+        🗑️ Hapus ({selectedIds.length} Terpilih)
+      </button>
+    )}
+    <button
+      onClick={handleClearAll}
+      disabled={isDeleting}
+      className="px-3 py-1.5 bg-gray-200 hover:bg-gray-300 dark:bg-gray-700 dark:hover:bg-gray-600 text-gray-800 dark:text-gray-200 rounded-lg text-xs font-semibold"
+    >
+      🧹 Bersihkan Semua
+    </button>
+  </div>
+</div>
+```
+
