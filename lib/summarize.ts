@@ -38,12 +38,12 @@ ${priorityInstruction}
 
 Pedoman penulisan:
 1. Tulis ringkasan 3 sampai 4 kalimat padat yang langsung menukik ke inti persoalan, siapa yang bertanggung jawab/terdampak, kontradiksi atau anomali yang terjadi, dan urgensi dampaknya bagi publik atau sektor terkait.
-2. Klasifikasikan berita ke salah satu kategori eksklusif: "POLITIK", "HUKUM", "BISNIS", "TEKNO", "INTERNASIONAL", atau "NASIONAL".
+2. Klasifikasikan berita ke salah satu kategori eksklusif: "LINGKUNGAN", "POLITIK", "HUKUM", "BISNIS", "TEKNO", "INTERNASIONAL", atau "NASIONAL". Jika isu menyangkut lingkungan hidup, krisis iklim, Greenpeace, deforestasi, polusi, tambang & AMDAL, atau transisi energi, prioritaskan kategori "LINGKUNGAN".
 3. DILARANG membuat fakta fiktif di luar teks sumber. Jangan menyalin kalimat panjang; rumuskan ulang dengan ketajaman analisis investigatif berbobot.
 4. Output WAJIB dalam format JSON valid persis seperti ini:
 {
   "summary": "Isi analisis investigatif 3-4 kalimat...",
-  "category": "POLITIK"
+  "category": "LINGKUNGAN"
 }`,
       },
       {

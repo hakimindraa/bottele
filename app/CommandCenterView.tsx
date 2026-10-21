@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Icons } from "@/components/Icons";
 import { CategoryStat, TrendingTopic } from "@/lib/analytics";
+import { LiveSearchItem } from "@/lib/liveSearch";
 
 export interface ArticleItem {
   id: number;
@@ -59,6 +60,30 @@ export default function CommandCenterView({
 }) {
   const router = useRouter();
 
+  // Geo Scope & Region
+  const [selectedRegion, setSelectedRegion] = useState<
+    "ID" | "GLOBAL" | "US" | "EU" | "ASIA"
+  >("ID");
+  const [selectedTimeRange, setSelectedTimeRange] = useState<
+    "24h" | "7d" | "1h" | "all"
+  >("24h");
+  const [selectedMediaScope, setSelectedMediaScope] = useState<
+    "all" | "top_national" | "global_elite"
+  >("top_national");
+
+  // Live Scout States
+  const [isLiveSearching, setIsLiveSearching] = useState<boolean>(false);
+  const [liveSearchResults, setLiveSearchResults] = useState<LiveSearchItem[]>(
+    []
+  );
+  const [liveSearchQuery, setLiveSearchQuery] = useState<string>("");
+  const [liveSearchMsg, setLiveSearchMsg] = useState<string | null>(null);
+
+  // Status Aksi Live Items
+  const [dispatchedTeleIds, setDispatchedTeleIds] = useState<string[]>([]);
+  const [savedDbIds, setSavedDbIds] = useState<string[]>([]);
+  const [actionLoadingId, setActionLoadingId] = useState<string | null>(null);
+
   // Filter States
   const [selectedSource, setSelectedSource] = useState<string>("ALL");
   const [selectedCategory, setSelectedCategory] = useState<string>("ALL");
@@ -97,9 +122,10 @@ export default function CommandCenterView({
   // Form input tambah Kata Kunci
   const [newKeywordInput, setNewKeywordInput] = useState("");
 
-  // Kategori unik
+  // Kategori unik (termasuk LINGKUNGAN untuk Greenpeace dkk)
   const categories = [
     "ALL",
+    "LINGKUNGAN",
     "POLITIK",
     "HUKUM",
     "BISNIS",
@@ -228,6 +254,122 @@ export default function CommandCenterView({
       alert("Terjadi kesalahan jaringan saat membersihkan radar.");
     } finally {
       setIsDeleting(false);
+    }
+  }
+
+  // Eksekusi Live Search Real-Time
+  async function handleLiveSearch(queryOverride?: string) {
+    const q = (queryOverride || searchQuery).trim();
+    if (!q) {
+      alert("Masukkan kata kunci atau topik terlebih dahulu (contoh: Greenpeace, Pilkada, KPK)");
+      return;
+    }
+
+    setIsLiveSearching(true);
+    setLiveSearchMsg(null);
+    setLiveSearchQuery(q);
+
+    try {
+      const res = await fetch("/api/scout/live-search", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          query: q,
+          region: selectedRegion,
+          timeRange: selectedTimeRange,
+          mediaScope: selectedMediaScope,
+          limit: 8,
+          synthesizeAi: true,
+        }),
+      });
+
+      const data = await res.json();
+      if (data.success) {
+        setLiveSearchResults(data.items || []);
+        if (data.items?.length === 0) {
+          setLiveSearchMsg(
+            `Tidak ditemukan liputan baru tentang "${q}" dalam rentang waktu yang dipilih.`
+          );
+        } else {
+          setLiveSearchMsg(
+            `Ditemukan ${data.items.length} berita terbaru & terhangat tentang "${q}".`
+          );
+        }
+      } else {
+        alert(data.error || "Gagal melakukan live scout berita.");
+      }
+    } catch {
+      alert("Kesalahan jaringan saat melakukan live scout.");
+    } finally {
+      setIsLiveSearching(false);
+    }
+  }
+
+  // Siarkan Live Intel ke Telegram
+  async function handleDispatchLiveTelegram(item: LiveSearchItem) {
+    setActionLoadingId(`tele-${item.id}`);
+    try {
+      const res = await fetch("/api/telegram/dispatch", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title: item.title,
+          url: item.url,
+          source: item.source,
+          summary: item.summary || item.snippet,
+          snippet: item.snippet,
+          category: item.category,
+          publishedAt: item.publishedAt,
+        }),
+      });
+
+      const data = await res.json();
+      if (data.success) {
+        setDispatchedTeleIds((prev) => [...prev, item.id]);
+        setScoutMessage(`Berita "${item.title.slice(0, 45)}..." berhasil disiarkan ke Telegram!`);
+      } else {
+        alert(data.error || "Gagal menyiarkan ke Telegram.");
+      }
+    } catch {
+      alert("Terjadi kesalahan jaringan saat menyiarkan ke Telegram.");
+    } finally {
+      setActionLoadingId(null);
+    }
+  }
+
+  // Simpan Live Intel ke Database
+  async function handleSaveLiveToDb(item: LiveSearchItem) {
+    setActionLoadingId(`save-${item.id}`);
+    try {
+      const res = await fetch("/api/articles/save-live", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title: item.title,
+          url: item.url,
+          source: item.source,
+          publishedAt: item.publishedAt,
+          summary: item.summary || item.snippet,
+          snippet: item.snippet,
+          category: item.category,
+          isPriority: item.isPriority,
+        }),
+      });
+
+      const data = await res.json();
+      if (data.success) {
+        setSavedDbIds((prev) => [...prev, item.id]);
+        setScoutMessage(
+          `Berita "${item.title.slice(0, 45)}..." berhasil disimpan ke radar arsip redaksi.`
+        );
+        router.refresh();
+      } else {
+        alert(data.error || "Gagal menyimpan ke database.");
+      }
+    } catch {
+      alert("Terjadi kesalahan jaringan saat menyimpan artikel.");
+    } finally {
+      setActionLoadingId(null);
     }
   }
 
@@ -488,6 +630,61 @@ export default function CommandCenterView({
         </div>
       </div>
 
+      {/* 2.0. GEO-SCOPE SWITCHER BAR */}
+      <div className="geo-switcher-bar">
+        <div className="geo-label-wrap">
+          <Icons.Globe size={16} /> CAKUPAN WILAYAH & GEOPOLITIK:
+        </div>
+        <div className="geo-tabs">
+          {[
+            {
+              id: "ID",
+              label: "Indonesia (Nasional)",
+              flag: "🇮🇩",
+              defaultScope: "top_national",
+            },
+            {
+              id: "GLOBAL",
+              label: "Global / Internasional",
+              flag: "🌍",
+              defaultScope: "global_elite",
+            },
+            {
+              id: "US",
+              label: "Amerika Serikat",
+              flag: "🇺🇸",
+              defaultScope: "global_elite",
+            },
+            {
+              id: "EU",
+              label: "Uni Eropa",
+              flag: "🇪🇺",
+              defaultScope: "global_elite",
+            },
+            {
+              id: "ASIA",
+              label: "Asia Pasifik",
+              flag: "🌏",
+              defaultScope: "all",
+            },
+          ].map((reg) => (
+            <button
+              key={reg.id}
+              onClick={() => {
+                setSelectedRegion(reg.id as any);
+                setSelectedMediaScope(reg.defaultScope as any);
+              }}
+              className={`geo-tab-btn ${
+                selectedRegion === reg.id ? "geo-active" : ""
+              }`}
+            >
+              <span>{reg.flag}</span>
+              <span>{reg.label}</span>
+            </button>
+          ))}
+        </div>
+      </div>
+
       {/* 2.1. TOPIC TREND RADAR & RUBRIK DISTRIBUTION WIDGET */}
       <div className="trends-grid">
         {/* Panel Kiri: Distribusi Rubrik Liputan */}
@@ -632,6 +829,249 @@ export default function CommandCenterView({
           </div>
         </div>
       </div>
+
+      {/* 3.1. SUPER SCOUT LIVE SEARCH BAR */}
+      <div className="super-scout-card">
+        <div className="scout-controls-row">
+          <div className="scout-input-wrap">
+            <span className="scout-icon-left">
+              <Icons.Search size={18} />
+            </span>
+            <input
+              type="text"
+              placeholder={`Ketik topik terhangat ${
+                selectedRegion === "ID"
+                  ? "Indonesia (misal: Greenpeace, Pilkada, KPK, IKN)"
+                  : "Global (misal: Climate Crisis, Trade War)"
+              }...`}
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  handleLiveSearch();
+                }
+              }}
+              className="scout-main-input"
+            />
+          </div>
+
+          {/* Selector Rentang Waktu */}
+          <select
+            value={selectedTimeRange}
+            onChange={(e) => setSelectedTimeRange(e.target.value as any)}
+            className="scout-select"
+            title="Pilih rentang waktu berita"
+          >
+            <option value="24h">⏱️ 24 Jam Terakhir</option>
+            <option value="1h">⚡ 1 Jam Terakhir</option>
+            <option value="7d">📅 7 Hari Terakhir</option>
+            <option value="all">🌐 Semua Waktu</option>
+          </select>
+
+          {/* Selector Portal Media */}
+          {selectedRegion === "ID" ? (
+            <select
+              value={selectedMediaScope}
+              onChange={(e) => setSelectedMediaScope(e.target.value as any)}
+              className="scout-select"
+              title="Target Portal Berita"
+            >
+              <option value="top_national">📰 Detik, Kompas, CNN, Tempo</option>
+              <option value="all">🌐 Seluruh Media Terverifikasi</option>
+            </select>
+          ) : (
+            <select
+              value={selectedMediaScope}
+              onChange={(e) => setSelectedMediaScope(e.target.value as any)}
+              className="scout-select"
+              title="Target Portal Media Global"
+            >
+              <option value="global_elite">
+                🌍 Reuters, BBC, Bloomberg, Al Jazeera
+              </option>
+              <option value="all">🌐 Semua Portal Global</option>
+            </select>
+          )}
+
+          {/* Tombol Eksekusi Live Scout */}
+          <button
+            onClick={() => handleLiveSearch()}
+            disabled={isLiveSearching}
+            className="btn-live-scout"
+          >
+            {isLiveSearching ? (
+              <>
+                <span className="spinner"></span> Menelusuri...
+              </>
+            ) : (
+              <>
+                <Icons.Zap size={16} /> TELUSURI MEDIA (LIVE SCOUT)
+              </>
+            )}
+          </button>
+        </div>
+
+        {/* Quick Trending Chips */}
+        <div className="scout-quick-chips">
+          <span className="quick-chip-label">TREN REDAKSI KILAT:</span>
+          {[
+            "Greenpeace",
+            "Pilkada Serentak",
+            "Putusan MK",
+            "KPK",
+            "IKN Nusantara",
+            "Subsidi BBM",
+            "Krisis Iklim",
+          ].map((topic) => (
+            <button
+              key={topic}
+              onClick={() => {
+                setSearchQuery(topic);
+                handleLiveSearch(topic);
+              }}
+              className="quick-chip-btn"
+              title={`Klik untuk live search topik "${topic}" seketika`}
+            >
+              🔥 {topic}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* 3.2. LIVE SCOUT STREAM RESULTS PANEL */}
+      {liveSearchResults.length > 0 && (
+        <div className="live-stream-panel">
+          <div className="live-stream-header">
+            <div>
+              <div className="live-stream-title-wrap">
+                <span className="live-pulse-badge">
+                  <Icons.Zap size={13} /> LIVE INTELLIGENCE
+                </span>
+                <h3 className="live-stream-title">
+                  Hasil Penelusuran Real-Time: &ldquo;{liveSearchQuery}&rdquo;
+                </h3>
+              </div>
+              <p className="live-stream-subtitle">
+                Ditemukan {liveSearchResults.length} liputan terbaru dari media
+                terverifikasi (
+                {selectedRegion === "ID"
+                  ? "Indonesia: Detik, Kompas, CNN, Tempo, dll"
+                  : selectedRegion}
+                )
+              </p>
+            </div>
+            <button
+              onClick={() => {
+                setLiveSearchResults([]);
+                setLiveSearchMsg(null);
+              }}
+              className="btn-close-live"
+            >
+              Tutup Hasil Live ✕
+            </button>
+          </div>
+
+          <div className="live-cards-grid">
+            {liveSearchResults.map((item, idx) => {
+              const isTeleSent = dispatchedTeleIds.includes(item.id);
+              const isDbSaved = savedDbIds.includes(item.id);
+              const isTeleLoading = actionLoadingId === `tele-${item.id}`;
+              const isSaveLoading = actionLoadingId === `save-${item.id}`;
+
+              return (
+                <div key={`${item.id}-${idx}`} className="live-card">
+                  <div>
+                    <div className="live-card-top">
+                      <div className="live-card-badges">
+                        <span className="badge-portal">{item.source}</span>
+                        {item.category === "LINGKUNGAN" ? (
+                          <span className="badge-category-lingkungan">
+                            <Icons.Leaf size={12} /> #LINGKUNGAN
+                          </span>
+                        ) : (
+                          <span className="badge-category">
+                            #{item.category}
+                          </span>
+                        )}
+                        {item.isPriority && (
+                          <span className="badge-priority">
+                            <Icons.AlertTriangle size={11} /> PRIORITAS
+                          </span>
+                        )}
+                      </div>
+                      <span className="badge-time-ago">
+                        <Icons.Clock size={11} /> {item.timeAgo}
+                      </span>
+                    </div>
+
+                    <h4 className="live-card-title">
+                      <a
+                        href={item.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                      >
+                        {item.title}
+                      </a>
+                    </h4>
+
+                    <div className="live-ai-box">
+                      <div className="live-ai-label">
+                        <Icons.Sparkles size={12} /> INTISARI JURNALIS AI:
+                      </div>
+                      <p className="live-ai-text">
+                        {item.summary || item.snippet}
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="live-card-actions">
+                    <button
+                      onClick={() => handleDispatchLiveTelegram(item)}
+                      disabled={isTeleSent || isTeleLoading}
+                      className={`btn-action-tele ${
+                        isTeleSent ? "is-sent" : ""
+                      }`}
+                      title="Siarkan ke bot Telegram redaksi"
+                    >
+                      <Icons.Telegram size={13} />
+                      {isTeleLoading
+                        ? "Mengirim..."
+                        : isTeleSent
+                        ? "Terkirim ke Telegram"
+                        : "Kirim ke Telegram"}
+                    </button>
+
+                    <button
+                      onClick={() => handleSaveLiveToDb(item)}
+                      disabled={isDbSaved || isSaveLoading}
+                      className={`btn-action-save ${
+                        isDbSaved ? "is-saved" : ""
+                      }`}
+                      title="Simpan artikel ini secara permanen ke database radar"
+                    >
+                      <Icons.Bookmark size={13} />
+                      {isSaveLoading
+                        ? "Menyimpan..."
+                        : isDbSaved
+                        ? "Tersimpan di Radar"
+                        : "Simpan ke Radar"}
+                    </button>
+
+                    <a
+                      href={item.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="link-source"
+                    >
+                      Sumber Asli <Icons.ExternalLink size={11} />
+                    </a>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {/* ALERT TOAST */}
       {scoutMessage && (
@@ -799,9 +1239,15 @@ export default function CommandCenterView({
                           </span>
                         )}
 
-                        <span className="badge-category">
-                          #{article.category || "UMUM"}
-                        </span>
+                        {article.category === "LINGKUNGAN" ? (
+                          <span className="badge-category-lingkungan">
+                            <Icons.Leaf size={12} /> #LINGKUNGAN
+                          </span>
+                        ) : (
+                          <span className="badge-category">
+                            #{article.category || "UMUM"}
+                          </span>
+                        )}
                         <span className="badge-source">{article.source}</span>
                         <span className="badge-date">
                           <Icons.Clock size={12} /> {dateStr} WIB

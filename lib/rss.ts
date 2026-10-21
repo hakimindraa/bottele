@@ -24,6 +24,9 @@ const parser = new Parser({
 
 function cleanSourceName(rawTitle?: string, fallbackUrl?: string): string {
   const str = rawTitle?.trim() || fallbackUrl || "Berita";
+  if (str.includes("Detik") || str.includes("detik")) return "Detikcom";
+  if (str.includes("CNN Indonesia") || str.includes("cnnindonesia")) return "CNN Indonesia";
+  if (str.includes("Greenpeace") || str.includes("greenpeace")) return "Greenpeace Indonesia";
   if (str.includes("CNBC Indonesia")) return "CNBC Indonesia";
   if (str.includes("ANTARA")) return "Antara News";
   if (str.includes("BBC News Indonesia")) return "BBC Indonesia";

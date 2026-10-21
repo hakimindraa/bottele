@@ -11,6 +11,7 @@ export interface TrendingTopic {
 }
 
 const CATEGORY_COLORS: Record<string, string> = {
+  LINGKUNGAN: "#059669", // Emerald Green (Aksen Lingkungan & Iklim)
   POLITIK: "#dc2626", // Crimson Red
   BISNIS: "#d97706",  // Amber
   TEKNO: "#2563eb",   // Royal Blue
