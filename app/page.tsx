@@ -35,7 +35,7 @@ export default async function Page() {
 
     // 1. Ambil artikel berita
     const rows = await sql`
-      SELECT id, source, title, url, published_at, summary, sent_at, created_at, category, is_priority
+      SELECT id, source, title, url, published_at, summary, sent_at, created_at, category, is_priority, is_synced_adafakta
       FROM articles
       WHERE summary IS NOT NULL AND summary != ''
       ORDER BY created_at DESC

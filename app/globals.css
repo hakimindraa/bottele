@@ -932,6 +932,32 @@ body {
   gap: 4px;
 }
 
+.btn-sync-adafakta {
+  background-color: #fff7ed;
+  color: #c2410c;
+  border: 1px solid #fed7aa;
+  font-size: 0.72rem;
+  font-weight: 700;
+  padding: 3px 10px;
+  border-radius: 4px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.btn-sync-adafakta:hover:not(:disabled) {
+  background-color: #ea580c;
+  color: #ffffff;
+  border-color: #c2410c;
+}
+
+.btn-sync-adafakta:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
 .sync-pill-tele {
   background-color: #dbeafe;
   color: #1d4ed8;

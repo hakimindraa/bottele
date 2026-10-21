@@ -173,7 +173,8 @@ export async function runDailyDigest(): Promise<DigestResult> {
       // Tandai sudah terkirim
       await sql`
         UPDATE articles
-        SET sent_at = now()
+        SET sent_at = now(),
+            is_synced_adafakta = ${adafaktaSuccess}
         WHERE id = ${article.id};
       `;
 

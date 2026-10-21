@@ -17,6 +17,7 @@ export interface ArticleItem {
   created_at: string | Date;
   category?: string;
   is_priority?: boolean;
+  is_synced_adafakta?: boolean;
 }
 
 export interface MetricStats {
@@ -83,6 +84,7 @@ export default function CommandCenterView({
   const [dispatchedTeleIds, setDispatchedTeleIds] = useState<string[]>([]);
   const [savedDbIds, setSavedDbIds] = useState<string[]>([]);
   const [actionLoadingId, setActionLoadingId] = useState<string | null>(null);
+  const [syncingAdafaktaId, setSyncingAdafaktaId] = useState<number | null>(null);
 
   // Filter States
   const [selectedSource, setSelectedSource] = useState<string>("ALL");
@@ -370,6 +372,29 @@ export default function CommandCenterView({
       alert("Terjadi kesalahan jaringan saat menyimpan artikel.");
     } finally {
       setActionLoadingId(null);
+    }
+  }
+
+  // Setor Manual Artikel Tertentu ke Meja Redaksi AdaFakta
+  async function handleSyncToAdafakta(id: number) {
+    setSyncingAdafaktaId(id);
+    try {
+      const res = await fetch("/api/articles/sync-adafakta", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setScoutMessage(data.message);
+        router.refresh();
+      } else {
+        alert(data.error || "Gagal menyetor artikel ke AdaFakta");
+      }
+    } catch {
+      alert("Kesalahan jaringan saat menyetor ke AdaFakta.");
+    } finally {
+      setSyncingAdafaktaId(null);
     }
   }
 
@@ -1256,9 +1281,23 @@ export default function CommandCenterView({
                     </div>
 
                     <div className="intel-sync-status">
-                      <span className="sync-pill-adafakta">
-                        <Icons.CheckCircle size={12} /> Disetor ke AdaFakta
-                      </span>
+                      {article.is_synced_adafakta ? (
+                        <span className="sync-pill-adafakta">
+                          <Icons.CheckCircle size={12} /> Disetor ke AdaFakta
+                        </span>
+                      ) : (
+                        <button
+                          onClick={() => handleSyncToAdafakta(article.id)}
+                          disabled={syncingAdafaktaId === article.id}
+                          className="btn-sync-adafakta"
+                          title="Klik untuk menyetor berita ini ke Meja Redaksi AdaFakta"
+                        >
+                          <Icons.Rocket size={11} />
+                          {syncingAdafaktaId === article.id
+                            ? "Menyetor..."
+                            : "Setor ke AdaFakta"}
+                        </button>
+                      )}
                       {article.sent_at && (
                         <span className="sync-pill-tele">
                           <Icons.Telegram size={12} /> Telegram OK

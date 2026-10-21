@@ -12,6 +12,11 @@ export async function ensureDatabaseSchema() {
       ALTER TABLE articles ADD COLUMN IF NOT EXISTS is_priority BOOLEAN DEFAULT false;
     `;
 
+    // 2.1. Kolom is_synced_adafakta di tabel articles
+    await sql`
+      ALTER TABLE articles ADD COLUMN IF NOT EXISTS is_synced_adafakta BOOLEAN DEFAULT false;
+    `;
+
     // 3. Tabel rss_sources
     await sql`
       CREATE TABLE IF NOT EXISTS rss_sources (
