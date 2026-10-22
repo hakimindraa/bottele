@@ -1,7 +1,12 @@
 import { sql } from "@/lib/db";
 import { fetchRecentItems } from "@/lib/rss";
 import { summarize } from "@/lib/summarize";
-import { escapeHtml, sendTelegram, TelegramInlineButton } from "@/lib/telegram";
+import {
+  escapeHtml,
+  sendTelegram,
+  TelegramInlineButton,
+  DEFAULT_PERSISTENT_KEYBOARD,
+} from "@/lib/telegram";
 import { sendToAdafakta } from "@/lib/adafakta";
 
 export interface ArticleRow {
@@ -163,12 +168,14 @@ export async function runDailyDigest(): Promise<DigestResult> {
       const buttons: TelegramInlineButton[][] = [
         [
           { text: "🔗 Sumber Berita Asli", url: article.url },
-          { text: "📝 Meja Redaksi AdaFakta", url: "https://www.adafakta.web.id/admin/jurnalis" },
+          adafaktaSuccess
+            ? { text: "📝 Meja Redaksi AdaFakta", url: "https://www.adafakta.web.id/admin/jurnalis" }
+            : { text: "📤 Setor ke AdaFakta", callback_data: `cb:adafakta:sync:${article.id}` },
         ],
       ];
 
-      // Kirim Pager Alert ke Telegram
-      await sendTelegram(message, buttons);
+      // Kirim Pager Alert ke Telegram dengan Persistent Keyboard
+      await sendTelegram(message, buttons, undefined, DEFAULT_PERSISTENT_KEYBOARD);
 
       // Tandai sudah terkirim
       await sql`

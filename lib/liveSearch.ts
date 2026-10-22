@@ -237,3 +237,6 @@ export async function executeLiveSearch({
     return [];
   }
 }
+
+export const searchLiveNews = executeLiveSearch;
+

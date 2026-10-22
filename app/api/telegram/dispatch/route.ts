@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { escapeHtml, sendTelegram } from "@/lib/telegram";
+import { escapeHtml, sendTelegram, DEFAULT_PERSISTENT_KEYBOARD } from "@/lib/telegram";
 
 export const dynamic = "force-dynamic";
 
@@ -58,7 +58,7 @@ export async function POST(request: Request) {
       ],
     ];
 
-    await sendTelegram(message, inlineButtons);
+    await sendTelegram(message, inlineButtons, undefined, DEFAULT_PERSISTENT_KEYBOARD);
 
     return NextResponse.json({
       success: true,

@@ -23,14 +23,15 @@ export async function GET() {
     // 2. Daftarkan Menu Perintah Cepat (setMyCommands) agar muncul di samping kolom chat
     const commandsPayload = {
       commands: [
+        { command: "start", description: "🤖 Buka menu utama & keyboard navigasi" },
+        { command: "scout", description: "⚡ Live Scout media internet real-time" },
+        { command: "radar", description: "📰 Pantau draf intelijen berita lokal" },
+        { command: "kategori", description: "🏷️ Filter berita per rubrik redaksi" },
+        { command: "trend", description: "📈 Analisis topik & isu terhangat" },
+        { command: "brief", description: "☀️ Dapatkan executive morning brief" },
+        { command: "settings", description: "⚙️ Pusat kendali operasional & metrik" },
         { command: "liput", description: "🚀 Luncurkan penyisiran berita seketika" },
-        { command: "status", description: "📊 Cek saklar & metrik radar terkini" },
-        { command: "pause", description: "🔴 Jeda jadwal liputan otomatis" },
-        { command: "resume", description: "🟢 Aktifkan kembali liputan otomatis" },
-        { command: "brief", description: "☀️ Kirim executive morning brief" },
-        { command: "prune", description: "🧹 Pangkas berita basi (> 7 hari)" },
-        { command: "cari", description: "🔍 Cari topik berita di database" },
-        { command: "help", description: "📖 Panduan perintah eksekutif" },
+        { command: "help", description: "📖 Panduan lengkap bot jurnalis AI" },
       ],
     };
 
