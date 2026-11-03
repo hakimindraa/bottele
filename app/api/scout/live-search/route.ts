@@ -14,6 +14,7 @@ export async function POST(request: Request) {
       timeRange = "24h",
       mediaScope = "all",
       limit = 10,
+      category,
       synthesizeAi = true,
     } = body as LiveSearchParams & { synthesizeAi?: boolean };
 
@@ -30,6 +31,7 @@ export async function POST(request: Request) {
       timeRange,
       mediaScope,
       limit,
+      category,
     });
 
     // Jika AI synthesis diaktifkan, berikan ringkasan jurnalis pada 2 artikel teratas

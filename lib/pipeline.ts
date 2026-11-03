@@ -27,9 +27,10 @@ export interface DigestResult {
   inserted: number;
   sent: number;
   failed: number;
+  freshnessTier?: string;
 }
 
-export async function runDailyDigest(): Promise<DigestResult> {
+export async function runDailyDigest(targetCategory?: string): Promise<DigestResult> {
   let fetched = 0;
   let inserted = 0;
   let sent = 0;
@@ -44,9 +45,10 @@ export async function runDailyDigest(): Promise<DigestResult> {
     console.warn("Gagal memuat priority_keywords:", e);
   }
 
-  // a. Sisir feed RSS terbaru
-  const items = await fetchRecentItems();
+  // a. Sisir feed RSS terbaru (bisa difokuskan per kategori target)
+  const items = await fetchRecentItems(targetCategory);
   fetched = items.length;
+  const bestFreshness = items[0]?.freshnessTier || "24 Jam Terakhir";
 
   const snippetMap = new Map<string, string>();
   for (const item of items) {
@@ -59,10 +61,11 @@ export async function runDailyDigest(): Promise<DigestResult> {
       // Cek apakah judul atau snippet mengandung kata kunci prioritas
       const textToScan = `${item.title} ${item.snippet}`.toLowerCase();
       const isPriority = priorityKeywords.some((kw) => kw && textToScan.includes(kw));
+      const itemCat = item.category || (targetCategory ? targetCategory.toUpperCase() : "UMUM");
 
       const res = await sql`
-        INSERT INTO articles (source, title, url, published_at, is_priority)
-        VALUES (${item.source}, ${item.title}, ${item.url}, ${item.publishedAt.toISOString()}, ${isPriority})
+        INSERT INTO articles (source, title, url, published_at, is_priority, category)
+        VALUES (${item.source}, ${item.title}, ${item.url}, ${item.publishedAt.toISOString()}, ${isPriority}, ${itemCat})
         ON CONFLICT (url) DO NOTHING
         RETURNING id;
       `;
@@ -74,15 +77,59 @@ export async function runDailyDigest(): Promise<DigestResult> {
     }
   }
 
-  // c. Ambil antrean berita terhangat yang belum diproses (utamakan berita berstatus priority)
+  // c. Ambil antrean berita terhangat yang belum diproses (Distribusi Terstruktur per Kategori)
   const maxArticles = Number(process.env.MAX_ARTICLES_PER_RUN) || 3;
-  const pendingArticles = (await sql`
-    SELECT id, source, title, url, published_at, summary, sent_at, created_at, category, is_priority
-    FROM articles
-    WHERE sent_at IS NULL
-    ORDER BY is_priority DESC, published_at DESC NULLS LAST
-    LIMIT ${maxArticles};
-  `) as unknown as ArticleRow[];
+  let pendingArticles: ArticleRow[] = [];
+
+  if (targetCategory) {
+    // Mode Fokus Kategori: Ambil berita teratas untuk kategori spesifik ini
+    pendingArticles = (await sql`
+      SELECT id, source, title, url, published_at, summary, sent_at, created_at, category, is_priority
+      FROM articles
+      WHERE sent_at IS NULL AND (category = ${targetCategory.toUpperCase()} OR category IS NULL OR category = 'UMUM')
+      ORDER BY is_priority DESC, published_at DESC NULLS LAST
+      LIMIT ${maxArticles};
+    `) as unknown as ArticleRow[];
+  } else {
+    // Mode Umum (Saat Radar ON / Cron): Partisi Kategori Adil (1 berita paling baru per rubrik aktif)
+    const structuredRows = (await sql`
+      WITH ranked_articles AS (
+        SELECT id, source, title, url, published_at, summary, sent_at, created_at, category, is_priority,
+               ROW_NUMBER() OVER (
+                 PARTITION BY COALESCE(category, 'UMUM')
+                 ORDER BY is_priority DESC, published_at DESC NULLS LAST
+               ) as rank_in_cat
+        FROM articles
+        WHERE sent_at IS NULL AND (is_synced_adafakta IS FALSE OR is_synced_adafakta IS NULL)
+      )
+      SELECT id, source, title, url, published_at, summary, sent_at, created_at, category, is_priority
+      FROM ranked_articles
+      WHERE rank_in_cat <= 1
+      ORDER BY is_priority DESC, published_at DESC NULLS LAST
+      LIMIT 6;
+    `) as unknown as ArticleRow[];
+
+    pendingArticles = structuredRows;
+
+    // Jika antrean terpartisi masih kurang dari 2 artikel, lengkapi dengan antrean umum pending
+    if (pendingArticles.length < 2) {
+      const fallbackRows = (await sql`
+        SELECT id, source, title, url, published_at, summary, sent_at, created_at, category, is_priority
+        FROM articles
+        WHERE sent_at IS NULL
+        ORDER BY is_priority DESC, published_at DESC NULLS LAST
+        LIMIT ${maxArticles};
+      `) as unknown as ArticleRow[];
+
+      const seenIds = new Set(pendingArticles.map((a) => a.id));
+      for (const row of fallbackRows) {
+        if (!seenIds.has(row.id)) {
+          pendingArticles.push(row);
+          seenIds.add(row.id);
+        }
+      }
+    }
+  }
 
   // d, e, f. Bedah fakta kritis, klasifikasi kategori, transfer ke AdaFakta, dan tembak Telegram Pager
   for (const article of pendingArticles) {
@@ -174,6 +221,11 @@ export async function runDailyDigest(): Promise<DigestResult> {
         ],
       ];
 
+      // Beri jeda 1.5 detik antar-pesan ke Telegram untuk menghindari rate limit dan tampil teratur
+      if (sent > 0) {
+        await new Promise((resolve) => setTimeout(resolve, 1500));
+      }
+
       // Kirim Pager Alert ke Telegram dengan Persistent Keyboard
       await sendTelegram(message, buttons, undefined, DEFAULT_PERSISTENT_KEYBOARD);
 
@@ -200,6 +252,6 @@ export async function runDailyDigest(): Promise<DigestResult> {
     console.warn("[Auto-Prune] Gagal menjalankan pemangkasan otomatis:", pruneErr);
   }
 
-  return { fetched, inserted, sent, failed };
+  return { fetched, inserted, sent, failed, freshnessTier: bestFreshness };
 }
 

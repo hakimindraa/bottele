@@ -27,6 +27,14 @@ export interface MetricStats {
   activeFeedsCount: number;
 }
 
+export interface CategoryBreakdownItem {
+  monitored: number;
+  sent: number;
+  synced: number;
+}
+
+export type CategoryBreakdownMap = Record<string, CategoryBreakdownItem>;
+
 export interface RssSourceItem {
   id: number;
   name: string;
@@ -49,6 +57,7 @@ export default function CommandCenterView({
   initialRetentionDays = 7,
   initialCategoryStats = [],
   initialTrendingTopics = [],
+  initialCategoryBreakdown = {},
 }: {
   initialArticles: ArticleItem[];
   metrics: MetricStats;
@@ -58,6 +67,7 @@ export default function CommandCenterView({
   initialRetentionDays?: number | null;
   initialCategoryStats?: CategoryStat[];
   initialTrendingTopics?: TrendingTopic[];
+  initialCategoryBreakdown?: CategoryBreakdownMap;
 }) {
   const router = useRouter();
 
@@ -66,8 +76,8 @@ export default function CommandCenterView({
     "ID" | "GLOBAL" | "US" | "EU" | "ASIA"
   >("ID");
   const [selectedTimeRange, setSelectedTimeRange] = useState<
-    "24h" | "7d" | "1h" | "all"
-  >("24h");
+    "30m" | "1h" | "90m" | "2h" | "4h" | "24h" | "7d" | "all"
+  >("30m");
   const [selectedMediaScope, setSelectedMediaScope] = useState<
     "all" | "top_national" | "global_elite"
   >("top_national");
@@ -78,16 +88,16 @@ export default function CommandCenterView({
     []
   );
   const [liveSearchQuery, setLiveSearchQuery] = useState<string>("");
-  const [liveSearchMsg, setLiveSearchMsg] = useState<string | null>(null);
 
   // Status Aksi Live Items
   const [dispatchedTeleIds, setDispatchedTeleIds] = useState<string[]>([]);
   const [savedDbIds, setSavedDbIds] = useState<string[]>([]);
   const [actionLoadingId, setActionLoadingId] = useState<string | null>(null);
-  const [syncingAdafaktaId, setSyncingAdafaktaId] = useState<number | null>(null);
+  const [syncingAdafaktaId, setSyncingAdafaktaId] = useState<number | null>(
+    null
+  );
 
-  // Filter States
-  const [selectedSource, setSelectedSource] = useState<string>("ALL");
+  // Filter Rubrik & Pencarian
   const [selectedCategory, setSelectedCategory] = useState<string>("ALL");
   const [searchQuery, setSearchQuery] = useState<string>("");
 
@@ -113,8 +123,10 @@ export default function CommandCenterView({
   const [isRssModalOpen, setIsRssModalOpen] = useState<boolean>(false);
   const [isKeywordModalOpen, setIsKeywordModalOpen] = useState<boolean>(false);
 
-  const [sourcesList, setSourcesList] = useState<RssSourceItem[]>(initialSources);
-  const [keywordsList, setKeywordsList] = useState<KeywordItem[]>(initialKeywords);
+  const [sourcesList, setSourcesList] =
+    useState<RssSourceItem[]>(initialSources);
+  const [keywordsList, setKeywordsList] =
+    useState<KeywordItem[]>(initialKeywords);
 
   // Form input tambah RSS
   const [newRssName, setNewRssName] = useState("");
@@ -124,37 +136,91 @@ export default function CommandCenterView({
   // Form input tambah Kata Kunci
   const [newKeywordInput, setNewKeywordInput] = useState("");
 
-  // Kategori unik (termasuk LINGKUNGAN untuk Greenpeace dkk)
-  const categories = [
-    "ALL",
-    "LINGKUNGAN",
-    "POLITIK",
-    "HUKUM",
-    "BISNIS",
-    "TEKNO",
-    "INTERNASIONAL",
-    "NASIONAL",
+  // Rubrik Utama Broadsheet
+  const editorialRubrics = [
+    { id: "ALL", label: "Semua Liputan", isTech: false },
+    { id: "TEKNO", label: "Radar Teknologi & AI", isTech: true },
+    { id: "POLITIK", label: "Politik & Pemilu", isTech: false },
+    { id: "HUKUM", label: "Hukum & Kriminal", isTech: false },
+    { id: "LINGKUNGAN", label: "Lingkungan & Iklim", isTech: false },
+    { id: "BISNIS", label: "Bisnis & Ekonomi", isTech: false },
+    { id: "INTERNASIONAL", label: "Internasional", isTech: false },
   ];
 
-  // Sumber unik
-  const sources = [
-    "ALL",
-    ...Array.from(new Set(initialArticles.map((a) => a.source))).filter(Boolean),
-  ];
+  const isTechMode = selectedCategory === "TEKNO";
+  const isAllCategory = selectedCategory === "ALL";
 
-  // Filter artikel
+  // Filter artikel di radar
   const filteredArticles = initialArticles.filter((article) => {
-    const matchesSource =
-      selectedSource === "ALL" || article.source === selectedSource;
-    const matchesCategory =
-      selectedCategory === "ALL" ||
-      (article.category || "UMUM").toUpperCase() === selectedCategory;
-    const matchesSearch =
-      searchQuery === "" ||
-      article.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      article.summary.toLowerCase().includes(searchQuery.toLowerCase());
-    return matchesSource && matchesCategory && matchesSearch;
+    // Jika mode Teknologi aktif: hanya ambil kategori TEKNO dan filter ketat
+    if (isTechMode) {
+      const artCat = (article.category || "").toUpperCase();
+      const isTechCat = artCat === "TEKNO" || artCat === "TECH";
+      const isTechSource =
+        article.source.toLowerCase().includes("tech") ||
+        article.source.toLowerCase().includes("daily") ||
+        article.source.toLowerCase().includes("inet");
+      if (!isTechCat && !isTechSource) return false;
+    } else if (selectedCategory !== "ALL") {
+      const artCat = (article.category || "UMUM").toUpperCase();
+      if (artCat !== selectedCategory) return false;
+    }
+
+    if (searchQuery.trim() !== "") {
+      const q = searchQuery.toLowerCase();
+      const matchesTitle = article.title.toLowerCase().includes(q);
+      const matchesSummary = article.summary.toLowerCase().includes(q);
+      const matchesSource = article.source.toLowerCase().includes(q);
+      if (!matchesTitle && !matchesSummary && !matchesSource) return false;
+    }
+
+    return true;
   });
+
+  // Metrik Reaktif Dinamis Mengikuti Kategori yang Dipilih
+  const dynamicMonitored = isAllCategory
+    ? metrics.totalMonitored
+    : initialCategoryBreakdown[selectedCategory]?.monitored ??
+      filteredArticles.length;
+
+  const dynamicTransferred = isAllCategory
+    ? metrics.totalTransferred
+    : initialCategoryBreakdown[selectedCategory]?.synced ??
+      initialArticles.filter(
+        (a) =>
+          (a.category || "").toUpperCase() === selectedCategory &&
+          a.is_synced_adafakta
+      ).length;
+
+  const dynamicSentTelegram = isAllCategory
+    ? metrics.totalSentTelegram
+    : initialCategoryBreakdown[selectedCategory]?.sent ??
+      initialArticles.filter(
+        (a) =>
+          (a.category || "").toUpperCase() === selectedCategory && a.sent_at
+      ).length;
+
+  const activeFeedsForCategory = isAllCategory
+    ? sourcesList.filter((s) => s.active)
+    : sourcesList.filter(
+        (s) =>
+          s.active &&
+          (s.category || "").toUpperCase() === selectedCategory
+      );
+
+  const dynamicActiveFeedsCount = activeFeedsForCategory.length;
+
+  const dynamicFeedsSubtext = isAllCategory
+    ? sourcesList.length > 0
+      ? `${activeFeedsForCategory.length} portal berita terverifikasi`
+      : "Tempo, Kompas, CNN, CNBC, BBC"
+    : activeFeedsForCategory.length > 0
+    ? activeFeedsForCategory.map((s) => s.name).join(", ")
+    : `Belum ada kanal khusus untuk rubrik ${selectedCategory}`;
+
+  const dynamicMonitoredSubtext = isAllCategory
+    ? "Seluruh arsip berita tersimpan di database"
+    : `Arsip berita kategori ${selectedCategory} di database`;
 
   const allFilteredIds = filteredArticles.map((a) => a.id);
   const isAllSelected =
@@ -174,6 +240,11 @@ export default function CommandCenterView({
       if (data.success) {
         setBotActive(data.active);
         setScoutMessage(data.message);
+        if (data.active) {
+          setTimeout(() => {
+            router.refresh();
+          }, 3500);
+        }
       }
     } catch {
       alert("Gagal mengubah status saklar bot.");
@@ -204,7 +275,7 @@ export default function CommandCenterView({
   async function handleDeleteSelected() {
     if (selectedIds.length === 0) return;
     const confirmDelete = window.confirm(
-      `Yakin ingin menghapus ${selectedIds.length} berita terpilih dari radar?`
+      `Hapus ${selectedIds.length} berita terpilih dari radar redaksi?`
     );
     if (!confirmDelete) return;
 
@@ -233,7 +304,7 @@ export default function CommandCenterView({
   // Bersihkan Seluruh Radar
   async function handleClearAllRadar() {
     const confirmClear = window.confirm(
-      "PERINGATAN: Yakin ingin mengosongkan SELURUH radar berita? Semua riwayat radar di bot akan dibersihkan."
+      "PERINGATAN: Yakin ingin mengosongkan SELURUH radar berita? Semua arsip radar akan dibersihkan."
     );
     if (!confirmClear) return;
 
@@ -263,23 +334,28 @@ export default function CommandCenterView({
   async function handleLiveSearch(queryOverride?: string) {
     const q = (queryOverride || searchQuery).trim();
     if (!q) {
-      alert("Masukkan kata kunci atau topik terlebih dahulu (contoh: Greenpeace, Pilkada, KPK)");
+      alert(
+        isTechMode
+          ? "Masukkan topik teknologi (contoh: OpenAI, Semikonduktor, Startup, Apple)"
+          : "Masukkan topik pencarian (contoh: Kebijakan Energi, KPK, Pilkada)"
+      );
       return;
     }
 
     setIsLiveSearching(true);
-    setLiveSearchMsg(null);
     setLiveSearchQuery(q);
 
     try {
+      const activeCat = selectedCategory !== "ALL" ? selectedCategory : undefined;
       const res = await fetch("/api/scout/live-search", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          query: q,
+          query: isTechMode ? `${q} teknologi tech` : q,
           region: selectedRegion,
           timeRange: selectedTimeRange,
           mediaScope: selectedMediaScope,
+          category: activeCat,
           limit: 8,
           synthesizeAi: true,
         }),
@@ -289,25 +365,25 @@ export default function CommandCenterView({
       if (data.success) {
         setLiveSearchResults(data.items || []);
         if (data.items?.length === 0) {
-          setLiveSearchMsg(
+          setScoutMessage(
             `Tidak ditemukan liputan baru tentang "${q}" dalam rentang waktu yang dipilih.`
           );
         } else {
-          setLiveSearchMsg(
-            `Ditemukan ${data.items.length} berita terbaru & terhangat tentang "${q}".`
+          setScoutMessage(
+            `Ditemukan ${data.items.length} berita terbaru tentang "${q}".`
           );
         }
       } else {
-        alert(data.error || "Gagal melakukan live scout berita.");
+        alert(data.error || "Gagal melakukan pencarian live scout.");
       }
     } catch {
-      alert("Kesalahan jaringan saat melakukan live scout.");
+      alert("Gagal terhubung ke layanan pencarian real-time.");
     } finally {
       setIsLiveSearching(false);
     }
   }
 
-  // Siarkan Live Intel ke Telegram
+  // Siarkan Item Live ke Telegram
   async function handleDispatchLiveTelegram(item: LiveSearchItem) {
     setActionLoadingId(`tele-${item.id}`);
     try {
@@ -316,30 +392,28 @@ export default function CommandCenterView({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           title: item.title,
-          url: item.url,
           source: item.source,
+          url: item.url,
           summary: item.summary || item.snippet,
-          snippet: item.snippet,
-          category: item.category,
-          publishedAt: item.publishedAt,
+          category: item.category || (isTechMode ? "TEKNO" : "UMUM"),
+          isPriority: item.isPriority,
         }),
       });
-
       const data = await res.json();
       if (data.success) {
         setDispatchedTeleIds((prev) => [...prev, item.id]);
-        setScoutMessage(`Berita "${item.title.slice(0, 45)}..." berhasil disiarkan ke Telegram!`);
+        setScoutMessage(`Berita "${item.title.slice(0, 45)}..." disiarkan ke Telegram.`);
       } else {
-        alert(data.error || "Gagal menyiarkan ke Telegram.");
+        alert(data.error || "Gagal mengirim ke Telegram");
       }
     } catch {
-      alert("Terjadi kesalahan jaringan saat menyiarkan ke Telegram.");
+      alert("Gagal menyiarkan berita ke Telegram");
     } finally {
       setActionLoadingId(null);
     }
   }
 
-  // Simpan Live Intel ke Database
+  // Simpan Item Live ke Database Radar
   async function handleSaveLiveToDb(item: LiveSearchItem) {
     setActionLoadingId(`save-${item.id}`);
     try {
@@ -348,108 +422,108 @@ export default function CommandCenterView({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           title: item.title,
-          url: item.url,
           source: item.source,
-          publishedAt: item.publishedAt,
+          url: item.url,
           summary: item.summary || item.snippet,
-          snippet: item.snippet,
-          category: item.category,
+          category: item.category || (isTechMode ? "TEKNO" : "UMUM"),
           isPriority: item.isPriority,
         }),
       });
-
       const data = await res.json();
       if (data.success) {
         setSavedDbIds((prev) => [...prev, item.id]);
-        setScoutMessage(
-          `Berita "${item.title.slice(0, 45)}..." berhasil disimpan ke radar arsip redaksi.`
-        );
+        setScoutMessage(`Berita disimpan ke database radar.`);
         router.refresh();
       } else {
-        alert(data.error || "Gagal menyimpan ke database.");
+        alert(data.error || "Gagal menyimpan ke radar");
       }
     } catch {
-      alert("Terjadi kesalahan jaringan saat menyimpan artikel.");
+      alert("Gagal menyimpan berita ke database");
     } finally {
       setActionLoadingId(null);
     }
   }
 
-  // Setor Manual Artikel Tertentu ke Meja Redaksi AdaFakta
-  async function handleSyncToAdafakta(id: number) {
-    setSyncingAdafaktaId(id);
+  // Setor Berita ke Meja Redaksi AdaFakta
+  async function handleSyncToAdafakta(articleId: number) {
+    setSyncingAdafaktaId(articleId);
     try {
       const res = await fetch("/api/articles/sync-adafakta", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id }),
+        body: JSON.stringify({ id: articleId }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setScoutMessage(`Draf liputan disetor ke redaksi AdaFakta.`);
+        router.refresh();
+      } else {
+        alert(data.error || "Gagal menyetor ke AdaFakta");
+      }
+    } catch {
+      alert("Gagal menyambung ke server AdaFakta.");
+    } finally {
+      setSyncingAdafaktaId(null);
+    }
+  }
+
+  // Trigger Scout Manual (bisa target kategori seperti TEKNO, INTERNASIONAL, dll.)
+  async function handleTriggerScout(targetCat?: string) {
+    const cat = targetCat !== undefined ? targetCat : (selectedCategory !== "ALL" ? selectedCategory : undefined);
+    setIsScouting(true);
+    setScoutMessage(null);
+    try {
+      const res = await fetch("/api/scout", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ category: cat }),
       });
       const data = await res.json();
       if (data.success) {
         setScoutMessage(data.message);
         router.refresh();
       } else {
-        alert(data.error || "Gagal menyetor artikel ke AdaFakta");
+        setScoutMessage(`Peringatan: ${data.message || "Gagal menyisir berita"}`);
       }
     } catch {
-      alert("Kesalahan jaringan saat menyetor ke AdaFakta.");
-    } finally {
-      setSyncingAdafaktaId(null);
-    }
-  }
-
-  // Manual Scout Trigger
-  async function handleTriggerScout() {
-    setIsScouting(true);
-    setScoutMessage(null);
-    try {
-      const res = await fetch("/api/scout", { method: "POST" });
-      const data = await res.json();
-      if (data.success) {
-        setScoutMessage(
-          `Liputan selesai! ${data.result.fetched} berita dipantau, ${data.result.inserted} berita baru disimpan, ${data.result.sent} disetor ke AdaFakta & Telegram.`
-        );
-        router.refresh();
-      } else {
-        setScoutMessage(`Gagal menjalankan liputan: ${data.message || data.error}`);
-      }
-    } catch {
-      setScoutMessage("Kesalahan jaringan saat memicu liputan.");
+      setScoutMessage("Terjadi kesalahan jaringan saat menyisir berita.");
     } finally {
       setIsScouting(false);
     }
   }
 
   // Ubah Pengaturan Durasi Retensi
-  async function handleChangeRetention(e: React.ChangeEvent<HTMLSelectElement>) {
+  async function handleChangeRetention(
+    e: React.ChangeEvent<HTMLSelectElement>
+  ) {
     const val = e.target.value;
-    const targetDays = val === "disabled" ? "disabled" : Number(val);
+    const newDays = val === "disabled" ? null : parseInt(val, 10);
+    setRetentionDays(newDays);
 
     try {
       const res = await fetch("/api/settings/retention", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ days: targetDays }),
+        body: JSON.stringify({ days: newDays }),
       });
       const data = await res.json();
       if (data.success) {
-        setRetentionDays(val === "disabled" ? null : Number(val));
-        setScoutMessage(data.message);
+        setScoutMessage(
+          newDays === null
+            ? "Retensi dinonaktifkan: Data berita disimpan permanen."
+            : `Kebijakan retensi diperbarui: Otomatis pangkas setelah ${newDays} hari.`
+        );
       }
     } catch {
-      alert("Gagal mengubah pengaturan retensi.");
+      alert("Gagal memperbarui pengaturan retensi.");
     }
   }
 
-  // Pemicu Pembersihan Data Basi Manual
+  // Pangkas Berita Basi Manual
   async function handleManualPrune() {
-    if (retentionDays === null) {
-      alert("Retensi data sedang dimatikan.");
-      return;
-    }
-
+    if (retentionDays === null) return;
     const confirmPrune = window.confirm(
-      `Pangkas seluruh berita basi yang berusia lebih dari ${retentionDays} hari?\n(Catatan: Berita bertanda prioritas redaksi tetap aman tersimpan).`
+      `Pangkas seluruh berita basi berusia lebih dari ${retentionDays} hari?\n(Berita prioritas redaksi tetap tersimpan aman).`
     );
     if (!confirmPrune) return;
 
@@ -494,6 +568,7 @@ export default function CommandCenterView({
         setSourcesList((prev) => [...prev, data.source]);
         setNewRssName("");
         setNewRssUrl("");
+        setScoutMessage(`Kanal RSS "${data.source.name}" ditambahkan.`);
       }
     } catch {
       alert("Gagal menambahkan sumber RSS");
@@ -561,835 +636,917 @@ export default function CommandCenterView({
     }
   }
 
+  // Lead Story (Headline Utama Pertama)
+  const leadStory = filteredArticles.length > 0 ? filteredArticles[0] : null;
+  const secondaryStories =
+    filteredArticles.length > 1 ? filteredArticles.slice(1) : [];
+
+  // Topik Cepat (Kontekstual: Jika mode teknologi, tampilkan topik teknologi)
+  const quickTopics = isTechMode
+    ? [
+        "Artificial Intelligence",
+        "Nvidia",
+        "OpenAI",
+        "Cybersecurity",
+        "Startup Indonesia",
+        "Semikonduktor",
+        "Gadget & Mobile",
+      ]
+    : [
+        "Pilkada Serentak",
+        "Greenpeace",
+        "KPK",
+        "IKN Nusantara",
+        "Subsidi BBM",
+        "Transisi Energi",
+        "Kebijakan Pajak",
+      ];
+
+  const currentDateFormatted = new Date().toLocaleDateString("id-ID", {
+    weekday: "long",
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+  });
+
+  const getScoutButtonConfig = (cat: string) => {
+    switch (cat) {
+      case "TEKNO":
+        return {
+          label: "Tarik Berita Teknologi Sekarang",
+          loadingLabel: "Menyisir Portal Teknologi...",
+          icon: <Icons.Cpu size={14} />,
+          style: { backgroundColor: "var(--tech)", borderColor: "var(--tech)" },
+        };
+      case "INTERNASIONAL":
+        return {
+          label: "Tarik Berita Internasional Sekarang",
+          loadingLabel: "Menyisir Portal Internasional...",
+          icon: <Icons.Globe size={14} />,
+          style: { backgroundColor: "#1e3a8a", borderColor: "#1e3a8a" },
+        };
+      case "POLITIK":
+        return {
+          label: "Tarik Berita Politik Sekarang",
+          loadingLabel: "Menyisir Portal Politik...",
+          icon: <Icons.Target size={14} />,
+          style: { backgroundColor: "var(--crimson)", borderColor: "var(--crimson)" },
+        };
+      case "LINGKUNGAN":
+        return {
+          label: "Tarik Berita Lingkungan Sekarang",
+          loadingLabel: "Menyisir Portal Lingkungan...",
+          icon: <Icons.Leaf size={14} />,
+          style: { backgroundColor: "var(--forest)", borderColor: "var(--forest)" },
+        };
+      case "BISNIS":
+        return {
+          label: "Tarik Berita Bisnis Sekarang",
+          loadingLabel: "Menyisir Portal Bisnis...",
+          icon: <Icons.Newspaper size={14} />,
+          style: { backgroundColor: "#0f766e", borderColor: "#0f766e" },
+        };
+      case "HUKUM":
+        return {
+          label: "Tarik Berita Hukum Sekarang",
+          loadingLabel: "Menyisir Portal Hukum...",
+          icon: <Icons.Filter size={14} />,
+          style: { backgroundColor: "#854d0e", borderColor: "#854d0e" },
+        };
+      default:
+        return {
+          label: "Luncurkan Liputan Semua Rubrik",
+          loadingLabel: "Menyisir Semua Kanal Media...",
+          icon: <Icons.Rocket size={14} />,
+          style: {},
+        };
+    }
+  };
+
+  const currentScoutConfig = getScoutButtonConfig(selectedCategory);
+
   return (
-    <div className="command-center">
-      {/* 1. TOP LIVE STATUS BAR (LIGHT EDITORIAL) */}
-      <div className="status-bar">
-        <div className="status-indicator">
-          <span
-            className={`pulse-dot ${botActive ? "pulse-active" : "pulse-paused"}`}
-          ></span>
-          <span className="status-title">
-            {botActive
-              ? "AUTONOMOUS SCOUT RADAR: ACTIVE"
-              : "AUTONOMOUS SCOUT RADAR: PAUSED / JEDA"}
-          </span>
-        </div>
-
-        <div className="status-meta">
-          {/* SAKLAR TOGGLE BOT ON / OFF */}
-          <button
-            onClick={handleToggleBot}
-            disabled={isTogglingBot}
-            className={`btn-bot-switch ${botActive ? "switch-on" : "switch-off"}`}
-            title="Klik untuk mengaktifkan atau menjeda bot"
-          >
-            <Icons.Power size={13} />
-            <span>
-              {isTogglingBot
-                ? "Memproses..."
-                : botActive
-                ? "SAKLAR: BOT AKTIF"
-                : "SAKLAR: BOT JEDA (OFF)"}
-            </span>
-          </button>
-
-          <span className="meta-badge pulse-green">
-            ● ADAFAKTA.WEB.ID SYNCED
-          </span>
-          <span className="meta-badge pulse-blue">
-            ● TELEGRAM PAGER ONLINE
-          </span>
-          <span className="meta-badge">PERSONA: KRITIS & TEGAS</span>
-        </div>
-      </div>
-
-      {/* 2. OPERATIONAL METRICS RIBBON (LIGHT) */}
-      <div className="metrics-grid">
-        <div className="metric-card">
-          <div className="metric-header">
-            <span className="metric-label">TOTAL BERITA DIPANTAU</span>
-            <div className="metric-icon-wrap">
-              <Icons.Radar size={18} />
-            </div>
+    <div className="broadsheet-container">
+      {/* 1. MASTHEAD & TOP EDITORIAL BAR */}
+      <header className="masthead-wrapper">
+        <div className="masthead-topline">
+          <div className="dateline-group">
+            <span>EDISI REDAKSI</span>
+            <span className="dateline-dot">•</span>
+            <span>{currentDateFormatted}</span>
+            <span className="dateline-dot">•</span>
+            <span>JAKARTA, INDONESIA</span>
           </div>
-          <div className="metric-value">{metrics.totalMonitored}</div>
-          <div className="metric-desc">Arus berita terdeteksi di database</div>
-        </div>
 
-        <div className="metric-card highlight-green">
-          <div className="metric-header">
-            <span className="metric-label">DISETOR KE ADAFAKTA</span>
-            <div className="metric-icon-wrap">
-              <Icons.Inbox size={18} />
-            </div>
-          </div>
-          <div className="metric-value">{metrics.totalTransferred}</div>
-          <div className="metric-desc">Bahan draf liputan di meja redaksi</div>
-        </div>
-
-        <div className="metric-card highlight-blue">
-          <div className="metric-header">
-            <span className="metric-label">TELEGRAM DISPATCH</span>
-            <div className="metric-icon-wrap">
-              <Icons.Telegram size={18} />
-            </div>
-          </div>
-          <div className="metric-value">{metrics.totalSentTelegram}</div>
-          <div className="metric-desc">Alarm intelijen terkirim ke redaktur</div>
-        </div>
-
-        <div className="metric-card">
-          <div className="metric-header">
-            <span className="metric-label">KANAL AKTIF 24/7</span>
-            <div className="metric-icon-wrap">
-              <Icons.Globe size={18} />
-            </div>
-          </div>
-          <div className="metric-value">{metrics.activeFeedsCount}</div>
-          <div className="metric-desc">
-            {sourcesList.length > 0
-              ? `${sourcesList.filter((s) => s.active).length} sumber RSS media aktif`
-              : "CNBC, TechCrunch, DailySocial, Antara, BBC"}
-          </div>
-        </div>
-      </div>
-
-      {/* 2.0. GEO-SCOPE SWITCHER BAR */}
-      <div className="geo-switcher-bar">
-        <div className="geo-label-wrap">
-          <Icons.Globe size={16} /> CAKUPAN WILAYAH & GEOPOLITIK:
-        </div>
-        <div className="geo-tabs">
-          {[
-            {
-              id: "ID",
-              label: "Indonesia (Nasional)",
-              flag: "🇮🇩",
-              defaultScope: "top_national",
-            },
-            {
-              id: "GLOBAL",
-              label: "Global / Internasional",
-              flag: "🌍",
-              defaultScope: "global_elite",
-            },
-            {
-              id: "US",
-              label: "Amerika Serikat",
-              flag: "🇺🇸",
-              defaultScope: "global_elite",
-            },
-            {
-              id: "EU",
-              label: "Uni Eropa",
-              flag: "🇪🇺",
-              defaultScope: "global_elite",
-            },
-            {
-              id: "ASIA",
-              label: "Asia Pasifik",
-              flag: "🌏",
-              defaultScope: "all",
-            },
-          ].map((reg) => (
+          <div className="masthead-controls">
+            {/* Saklar Bot */}
             <button
-              key={reg.id}
-              onClick={() => {
-                setSelectedRegion(reg.id as any);
-                setSelectedMediaScope(reg.defaultScope as any);
-              }}
-              className={`geo-tab-btn ${
-                selectedRegion === reg.id ? "geo-active" : ""
-              }`}
+              onClick={handleToggleBot}
+              disabled={isTogglingBot}
+              className={`btn-bot-toggle ${botActive ? "active" : "paused"}`}
+              title="Aktifkan atau jeda pemantauan otomatis"
             >
-              <span>{reg.flag}</span>
-              <span>{reg.label}</span>
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {/* 2.1. TOPIC TREND RADAR & RUBRIK DISTRIBUTION WIDGET */}
-      <div className="trends-grid">
-        {/* Panel Kiri: Distribusi Rubrik Liputan */}
-        <div className="trend-card">
-          <div className="trend-card-header">
-            <span className="trend-card-title">
-              <Icons.Target size={15} /> DISTRIBUSI RUBRIK LIPUTAN
-            </span>
-            <span className="trend-card-subtitle">
-              {initialCategoryStats.reduce((acc, curr) => acc + curr.count, 0)} Isu Terdeteksi
-            </span>
-          </div>
-
-          {/* Segmented Multi-Color Progress Bar */}
-          <div className="segmented-bar">
-            {initialCategoryStats.length > 0 ? (
-              initialCategoryStats.map((item) => (
-                <div
-                  key={item.category}
-                  className="bar-segment"
-                  style={{
-                    width: `${item.percentage}%`,
-                    backgroundColor: item.color,
-                  }}
-                  onClick={() => setSelectedCategory(item.category)}
-                  title={`${item.category}: ${item.percentage}% (${item.count} isu) - Klik untuk memfilter`}
-                />
-              ))
-            ) : (
-              <div style={{ width: "100%", backgroundColor: "#e2e8f0" }} />
-            )}
-          </div>
-
-          {/* Legenda Rubrik Interaktif */}
-          <div className="category-legend-grid">
-            {initialCategoryStats.map((item) => (
-              <button
-                key={item.category}
-                onClick={() => setSelectedCategory(item.category)}
-                className="legend-item"
-                title={`Klik untuk memfilter rubrik ${item.category}`}
-              >
-                <span className="legend-dot" style={{ backgroundColor: item.color }} />
-                <span>{item.category}:</span>
-                <span className="legend-pct">{item.percentage}%</span>
-              </button>
-            ))}
-          </div>
-        </div>
-
-        {/* Panel Kanan: Topik Terhangat 24 Jam */}
-        <div className="trend-card">
-          <div className="trend-card-header">
-            <span className="trend-card-title">
-              <Icons.Radar size={15} /> TOPIK TERHANGAT 24 JAM
-            </span>
-            <span className="trend-card-subtitle">Top Entitas & Isu Media</span>
-          </div>
-
-          {/* Trending Topic Chips */}
-          <div className="trend-chips-wrap">
-            {initialTrendingTopics.length > 0 ? (
-              initialTrendingTopics.map((item) => (
-                <button
-                  key={item.topic}
-                  onClick={() => setSearchQuery(item.topic)}
-                  className="trend-chip"
-                  title={`Klik untuk menyaring "${item.topic}" di radar`}
-                >
-                  <span>🔥 {item.topic}</span>
-                  <span className="trend-chip-count">{item.count}x</span>
-                </button>
-              ))
-            ) : (
-              <span style={{ fontSize: "0.8rem", color: "var(--text-dim)" }}>
-                Belum ada kata kunci yang dominan saat ini.
+              <Icons.Power size={11} />
+              <span>
+                {isTogglingBot
+                  ? "MEMPROSES..."
+                  : botActive
+                  ? "RADAR AKTIF 24/7"
+                  : "RADAR DIJEDA (OFF)"}
               </span>
-            )}
-          </div>
-
-          <span className="trend-help-text">
-            * Klik salah satu topik di atas untuk menyaring radar berita secara otomatis
-          </span>
-        </div>
-      </div>
-
-      {/* 3. TACTICAL ACTION BAR (LIGHT) */}
-      <div className="action-bar">
-        <div className="action-left">
-          <button
-            onClick={handleTriggerScout}
-            disabled={isScouting}
-            className={`btn-trigger ${isScouting ? "btn-loading" : ""}`}
-          >
-            {isScouting ? (
-              <>
-                <span className="spinner"></span> Menyisir Isu Hangat...
-              </>
-            ) : (
-              <>
-                <Icons.Rocket size={16} /> LUNCURKAN LIPUTAN SEKARANG
-              </>
-            )}
-          </button>
-
-          <button
-            onClick={() => setIsRssModalOpen(true)}
-            className="btn-outline-action"
-          >
-            <Icons.Rss size={15} /> Kelola Kanal RSS ({sourcesList.length})
-          </button>
-
-          <button
-            onClick={() => setIsKeywordModalOpen(true)}
-            className="btn-outline-action"
-          >
-            <Icons.Target size={15} /> Fokus Topik ({keywordsList.length})
-          </button>
-
-          <a
-            href="https://www.adafakta.web.id/admin/jurnalis"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="btn-redaksi"
-          >
-            Meja Redaksi AdaFakta <Icons.ExternalLink size={13} />
-          </a>
-        </div>
-
-        <div className="action-right">
-          <div className="search-box">
-            <span className="search-icon-inside">
-              <Icons.Search size={16} />
-            </span>
-            <input
-              type="text"
-              placeholder="Cari isu, figur, peristiwa kritis..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="search-input"
-            />
-          </div>
-        </div>
-      </div>
-
-      {/* 3.1. SUPER SCOUT LIVE SEARCH BAR */}
-      <div className="super-scout-card">
-        <div className="scout-controls-row">
-          <div className="scout-input-wrap">
-            <span className="scout-icon-left">
-              <Icons.Search size={18} />
-            </span>
-            <input
-              type="text"
-              placeholder={`Ketik topik terhangat ${
-                selectedRegion === "ID"
-                  ? "Indonesia (misal: Greenpeace, Pilkada, KPK, IKN)"
-                  : "Global (misal: Climate Crisis, Trade War)"
-              }...`}
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") {
-                  handleLiveSearch();
-                }
-              }}
-              className="scout-main-input"
-            />
-          </div>
-
-          {/* Selector Rentang Waktu */}
-          <select
-            value={selectedTimeRange}
-            onChange={(e) => setSelectedTimeRange(e.target.value as any)}
-            className="scout-select"
-            title="Pilih rentang waktu berita"
-          >
-            <option value="24h">⏱️ 24 Jam Terakhir</option>
-            <option value="1h">⚡ 1 Jam Terakhir</option>
-            <option value="7d">📅 7 Hari Terakhir</option>
-            <option value="all">🌐 Semua Waktu</option>
-          </select>
-
-          {/* Selector Portal Media */}
-          {selectedRegion === "ID" ? (
-            <select
-              value={selectedMediaScope}
-              onChange={(e) => setSelectedMediaScope(e.target.value as any)}
-              className="scout-select"
-              title="Target Portal Berita"
-            >
-              <option value="top_national">📰 Detik, Kompas, CNN, Tempo</option>
-              <option value="all">🌐 Seluruh Media Terverifikasi</option>
-            </select>
-          ) : (
-            <select
-              value={selectedMediaScope}
-              onChange={(e) => setSelectedMediaScope(e.target.value as any)}
-              className="scout-select"
-              title="Target Portal Media Global"
-            >
-              <option value="global_elite">
-                🌍 Reuters, BBC, Bloomberg, Al Jazeera
-              </option>
-              <option value="all">🌐 Semua Portal Global</option>
-            </select>
-          )}
-
-          {/* Tombol Eksekusi Live Scout */}
-          <button
-            onClick={() => handleLiveSearch()}
-            disabled={isLiveSearching}
-            className="btn-live-scout"
-          >
-            {isLiveSearching ? (
-              <>
-                <span className="spinner"></span> Menelusuri...
-              </>
-            ) : (
-              <>
-                <Icons.Zap size={16} /> TELUSURI MEDIA (LIVE SCOUT)
-              </>
-            )}
-          </button>
-        </div>
-
-        {/* Quick Trending Chips */}
-        <div className="scout-quick-chips">
-          <span className="quick-chip-label">TREN REDAKSI KILAT:</span>
-          {[
-            "Greenpeace",
-            "Pilkada Serentak",
-            "Putusan MK",
-            "KPK",
-            "IKN Nusantara",
-            "Subsidi BBM",
-            "Krisis Iklim",
-          ].map((topic) => (
-            <button
-              key={topic}
-              onClick={() => {
-                setSearchQuery(topic);
-                handleLiveSearch(topic);
-              }}
-              className="quick-chip-btn"
-              title={`Klik untuk live search topik "${topic}" seketika`}
-            >
-              🔥 {topic}
             </button>
-          ))}
-        </div>
-      </div>
 
-      {/* 3.2. LIVE SCOUT STREAM RESULTS PANEL */}
-      {liveSearchResults.length > 0 && (
-        <div className="live-stream-panel">
-          <div className="live-stream-header">
-            <div>
-              <div className="live-stream-title-wrap">
-                <span className="live-pulse-badge">
-                  <Icons.Zap size={13} /> LIVE INTELLIGENCE
-                </span>
-                <h3 className="live-stream-title">
-                  Hasil Penelusuran Real-Time: &ldquo;{liveSearchQuery}&rdquo;
-                </h3>
-              </div>
-              <p className="live-stream-subtitle">
-                Ditemukan {liveSearchResults.length} liputan terbaru dari media
-                terverifikasi (
-                {selectedRegion === "ID"
-                  ? "Indonesia: Detik, Kompas, CNN, Tempo, dll"
-                  : selectedRegion}
-                )
-              </p>
-            </div>
-            <button
-              onClick={() => {
-                setLiveSearchResults([]);
-                setLiveSearchMsg(null);
-              }}
-              className="btn-close-live"
+            {/* Link Meja Redaksi */}
+            <a
+              href="https://www.adafakta.web.id/admin/jurnalis"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="link-newsroom-portal"
             >
-              Tutup Hasil Live ✕
-            </button>
-          </div>
-
-          <div className="live-cards-grid">
-            {liveSearchResults.map((item, idx) => {
-              const isTeleSent = dispatchedTeleIds.includes(item.id);
-              const isDbSaved = savedDbIds.includes(item.id);
-              const isTeleLoading = actionLoadingId === `tele-${item.id}`;
-              const isSaveLoading = actionLoadingId === `save-${item.id}`;
-
-              return (
-                <div key={`${item.id}-${idx}`} className="live-card">
-                  <div>
-                    <div className="live-card-top">
-                      <div className="live-card-badges">
-                        <span className="badge-portal">{item.source}</span>
-                        {item.category === "LINGKUNGAN" ? (
-                          <span className="badge-category-lingkungan">
-                            <Icons.Leaf size={12} /> #LINGKUNGAN
-                          </span>
-                        ) : (
-                          <span className="badge-category">
-                            #{item.category}
-                          </span>
-                        )}
-                        {item.isPriority && (
-                          <span className="badge-priority">
-                            <Icons.AlertTriangle size={11} /> PRIORITAS
-                          </span>
-                        )}
-                      </div>
-                      <span className="badge-time-ago">
-                        <Icons.Clock size={11} /> {item.timeAgo}
-                      </span>
-                    </div>
-
-                    <h4 className="live-card-title">
-                      <a
-                        href={item.url}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                      >
-                        {item.title}
-                      </a>
-                    </h4>
-
-                    <div className="live-ai-box">
-                      <div className="live-ai-label">
-                        <Icons.Sparkles size={12} /> INTISARI JURNALIS AI:
-                      </div>
-                      <p className="live-ai-text">
-                        {item.summary || item.snippet}
-                      </p>
-                    </div>
-                  </div>
-
-                  <div className="live-card-actions">
-                    <button
-                      onClick={() => handleDispatchLiveTelegram(item)}
-                      disabled={isTeleSent || isTeleLoading}
-                      className={`btn-action-tele ${
-                        isTeleSent ? "is-sent" : ""
-                      }`}
-                      title="Siarkan ke bot Telegram redaksi"
-                    >
-                      <Icons.Telegram size={13} />
-                      {isTeleLoading
-                        ? "Mengirim..."
-                        : isTeleSent
-                        ? "Terkirim ke Telegram"
-                        : "Kirim ke Telegram"}
-                    </button>
-
-                    <button
-                      onClick={() => handleSaveLiveToDb(item)}
-                      disabled={isDbSaved || isSaveLoading}
-                      className={`btn-action-save ${
-                        isDbSaved ? "is-saved" : ""
-                      }`}
-                      title="Simpan artikel ini secara permanen ke database radar"
-                    >
-                      <Icons.Bookmark size={13} />
-                      {isSaveLoading
-                        ? "Menyimpan..."
-                        : isDbSaved
-                        ? "Tersimpan di Radar"
-                        : "Simpan ke Radar"}
-                    </button>
-
-                    <a
-                      href={item.url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="link-source"
-                    >
-                      Sumber Asli <Icons.ExternalLink size={11} />
-                    </a>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
-
-      {/* ALERT TOAST */}
-      {scoutMessage && (
-        <div className="scout-toast">
-          <span>{scoutMessage}</span>
-          <button onClick={() => setScoutMessage(null)} className="toast-close">
-            <Icons.Close size={16} />
-          </button>
-        </div>
-      )}
-
-      {/* 4. DUAL FILTER STRIP (LIGHT) */}
-      <div className="filter-container">
-        {/* Baris 1: Filter Rubrik Kategori AI */}
-        <div className="filter-row">
-          <span className="filter-label">RUBRIK AI:</span>
-          <div className="filter-pills">
-            {categories.map((cat) => (
-              <button
-                key={cat}
-                onClick={() => setSelectedCategory(cat)}
-                className={`pill-btn ${selectedCategory === cat ? "pill-active" : ""}`}
-              >
-                {cat === "ALL" ? "Semua Rubrik" : cat}
-              </button>
-            ))}
+              MEJA REDAKSI ADAFAKTA <Icons.ExternalLink size={11} />
+            </a>
           </div>
         </div>
 
-        {/* Baris 2: Filter Sumber Kanal Berita */}
-        <div className="filter-row">
-          <span className="filter-label">KANAL RSS:</span>
-          <div className="filter-pills">
-            {sources.map((src) => (
-              <button
-                key={src}
-                onClick={() => setSelectedSource(src)}
-                className={`pill-btn ${selectedSource === src ? "pill-active" : ""}`}
-              >
-                {src === "ALL" ? "Semua Kanal Media" : src}
-              </button>
-            ))}
-          </div>
-        </div>
-      </div>
-
-      {/* 5. RADAR LIVE STREAM DENGAN BATCH SELECT & DELETE */}
-      <div className="radar-section">
-        <div className="radar-header">
-          <div>
-            <h2 className="radar-title">
-              <Icons.Radar size={20} /> RADAR INTELIJEN LIPUTAN (
-              {filteredArticles.length} Isu)
-            </h2>
-            <span className="radar-subtitle">
-              Urutan investigasi terbaru siap disetor ke redaksi AdaFakta
-            </span>
-          </div>
-
-          {/* BATCH ACTION CONTROLS */}
-          {filteredArticles.length > 0 && (
-            <div className="batch-actions">
-              <label className="batch-select-all">
-                <input
-                  type="checkbox"
-                  checked={isAllSelected}
-                  onChange={handleToggleSelectAll}
-                  className="custom-checkbox"
-                />
-                <span>Pilih Semua</span>
-              </label>
-
-              {selectedIds.length > 0 && (
-                <button
-                  onClick={handleDeleteSelected}
-                  disabled={isDeleting}
-                  className="btn-batch-delete"
-                >
-                  <Icons.Trash size={14} /> Hapus ({selectedIds.length} Terpilih)
-                </button>
-              )}
-
-              <button
-                onClick={handleClearAllRadar}
-                disabled={isDeleting}
-                className="btn-clear-all"
-              >
-                <Icons.Broom size={14} /> Bersihkan Semua
-              </button>
-
-              {/* KONTROL RETENSI DATA BASI */}
-              <div className="retention-wrap">
-                <label className="retention-label">
-                  <Icons.Clock size={12} /> Retensi:
-                </label>
-                <select
-                  value={retentionDays === null ? "disabled" : String(retentionDays)}
-                  onChange={handleChangeRetention}
-                  className="retention-select"
-                  title="Pilih durasi retensi data basi"
-                >
-                  <option value="3">3 Hari</option>
-                  <option value="7">7 Hari (Default)</option>
-                  <option value="14">14 Hari</option>
-                  <option value="30">30 Hari</option>
-                  <option value="disabled">Matikan (Simpan Abadi)</option>
-                </select>
-                <button
-                  onClick={handleManualPrune}
-                  disabled={isPruning || retentionDays === null}
-                  className="btn-prune-now"
-                  title="Pangkas data basi berusia > batas retensi sekarang"
-                >
-                  <Icons.Broom size={12} /> {isPruning ? "Memangkas..." : "Pangkas Basi"}
-                </button>
-              </div>
-            </div>
-          )}
-        </div>
-
-        {filteredArticles.length === 0 ? (
-          <div className="empty-radar">
-            <p>Tidak ada berita di radar untuk filter saat ini.</p>
-            <p className="empty-sub">
-              Klik <strong>Luncurkan Liputan Sekarang</strong> untuk mulai
-              menyisir berita baru.
+        <div className="masthead-main">
+          <div className="masthead-brand">
+            <h1 className="masthead-title">ADAFAKTA INTELLIGENCE RADAR</h1>
+            <p className="masthead-tagline">
+              Pusat investigasi, verifikasi fakta, dan kurasi berita harian
+              bertenaga kecerdasan buatan untuk jurnalisme berwibawa.
             </p>
           </div>
-        ) : (
-          <div className="radar-list">
-            {filteredArticles.map((article, idx) => {
-              const dateObj = article.published_at || article.created_at;
-              const dateStr = dateObj
-                ? new Date(dateObj).toLocaleString("id-ID", {
-                    timeZone: "Asia/Bangkok",
-                    dateStyle: "medium",
-                    timeStyle: "short",
-                  })
-                : "-";
 
-              const isChecked = selectedIds.includes(article.id);
-              const isUltraPriority = article.is_priority || idx === 0;
+          <div className="masthead-actions">
+            <button
+              onClick={() => handleTriggerScout()}
+              disabled={isScouting}
+              className="btn-scout-lead"
+              style={currentScoutConfig.style}
+            >
+              {currentScoutConfig.icon}
+              <span>
+                {isScouting
+                  ? currentScoutConfig.loadingLabel
+                  : currentScoutConfig.label}
+              </span>
+            </button>
+          </div>
+        </div>
+      </header>
 
-              return (
-                <div
-                  key={article.id}
-                  className={`intel-card ${isChecked ? "card-selected" : ""}`}
+      {/* 2. DATA RIBBON (METRIK TERINTEGRASI REAKTIF PER KATEGORI) */}
+      <section className="data-ribbon">
+        <div className="data-ribbon-item">
+          <div className="ribbon-label">
+            BERITA TERPANTAU {isAllCategory ? "" : `(${selectedCategory})`}
+          </div>
+          <div className="ribbon-value">{dynamicMonitored}</div>
+          <div className="ribbon-sub" title={dynamicMonitoredSubtext}>
+            {dynamicMonitoredSubtext}
+          </div>
+        </div>
+
+        <div className="data-ribbon-item">
+          <div className="ribbon-label">
+            DISETOR KE ADAFAKTA {isAllCategory ? "" : `(${selectedCategory})`}
+          </div>
+          <div className="ribbon-value">{dynamicTransferred}</div>
+          <div className="ribbon-sub">Bahan investigasi di meja redaktur</div>
+        </div>
+
+        <div className="data-ribbon-item">
+          <div className="ribbon-label">
+            TELEGRAM DISPATCH {isAllCategory ? "" : `(${selectedCategory})`}
+          </div>
+          <div className="ribbon-value">{dynamicSentTelegram}</div>
+          <div className="ribbon-sub">Alarm intelijen terkirim ke bot redaksi</div>
+        </div>
+
+        <div className="data-ribbon-item">
+          <div className="ribbon-label">
+            KANAL RSS AKTIF {isAllCategory ? "" : `(${selectedCategory})`}
+          </div>
+          <div className="ribbon-value">{dynamicActiveFeedsCount}</div>
+          <div className="ribbon-sub" title={dynamicFeedsSubtext}>
+            {dynamicFeedsSubtext}
+          </div>
+        </div>
+      </section>
+
+      {/* 3. EDITORIAL RUBRICS (NAVIGATION BAR) */}
+      <nav className="rubric-navbar">
+        <div className="rubric-tabs-left">
+          {editorialRubrics.map((rubric) => {
+            const isActive = selectedCategory === rubric.id;
+            return (
+              <button
+                key={rubric.id}
+                onClick={() => setSelectedCategory(rubric.id)}
+                className={`rubric-tab ${rubric.isTech ? "tab-tech" : ""} ${
+                  isActive ? "active" : ""
+                }`}
+              >
+                {rubric.isTech && (
+                  <Icons.Cpu size={13} className="rubric-tab-icon" />
+                )}
+                {rubric.label}
+              </button>
+            );
+          })}
+        </div>
+      </nav>
+
+      {/* CALLOUT BANNER KANAL EKSKLUSIF TEKNOLOGI */}
+      {isTechMode && (
+        <div className="tech-mode-banner">
+          <div className="tech-banner-text">
+            <span className="tech-badge-exclusive">KANAL EKSKLUSIF</span>
+            <span>
+              Mode Radar Teknologi & AI Aktif — Seluruh berita politik dan isu
+              hukum difilter keluar.
+            </span>
+          </div>
+          <button
+            onClick={() => setSelectedCategory("ALL")}
+            className="btn-exit-tech"
+          >
+            Tampilkan Semua Liputan ✕
+          </button>
+        </div>
+      )}
+
+      {/* 4. ASYMMETRICAL 2-COLUMN EDITORIAL GRID */}
+      <div className="editorial-grid">
+        {/* KOLOM KIRI: ARUS BERITA INTELIJEN (68%) */}
+        <main className="news-stream-col">
+          {/* HASIL LIVE SCOUT JIKA AKTIF */}
+          {liveSearchResults.length > 0 && (
+            <div className="live-results-section">
+              <div className="live-results-header">
+                <span className="live-results-title">
+                  <Icons.Zap size={14} /> LIVE SCOUT: &ldquo;{liveSearchQuery}&rdquo; (
+                  {liveSearchResults.length} Laporan)
+                </span>
+                <button
+                  onClick={() => setLiveSearchResults([])}
+                  className="btn-close-live"
                 >
-                  <div className="intel-top">
-                    <div className="intel-left-wrap">
-                      <input
-                        type="checkbox"
-                        checked={isChecked}
-                        onChange={() => handleToggleSelectOne(article.id)}
-                        className="custom-checkbox card-check"
-                      />
-                      <div className="intel-badges">
-                        {isUltraPriority ? (
-                          <span className="badge-priority">
-                            <Icons.AlertTriangle size={12} /> ULTRA HIGH PRIORITY
-                          </span>
-                        ) : (
-                          <span className="badge-urgency">
-                            <Icons.Target size={12} /> ISU UTAMA
-                          </span>
-                        )}
+                  Tutup Hasil Live ✕
+                </button>
+              </div>
 
-                        {article.category === "LINGKUNGAN" ? (
-                          <span className="badge-category-lingkungan">
-                            <Icons.Leaf size={12} /> #LINGKUNGAN
-                          </span>
-                        ) : (
-                          <span className="badge-category">
-                            #{article.category || "UMUM"}
-                          </span>
+              <div className="live-cards-stream">
+                {liveSearchResults.map((item, idx) => {
+                  const isTeleSent = dispatchedTeleIds.includes(item.id);
+                  const isDbSaved = savedDbIds.includes(item.id);
+                  const isTeleLoading = actionLoadingId === `tele-${item.id}`;
+                  const isSaveLoading = actionLoadingId === `save-${item.id}`;
+
+                  return (
+                    <article key={`${item.id}-${idx}`} className="live-item-card">
+                      <div className="live-item-meta">
+                        <span style={{ fontWeight: 800 }}>{item.source}</span>
+                        <span>•</span>
+                        <span>#{item.category || (isTechMode ? "TEKNO" : "UMUM")}</span>
+                        <span>•</span>
+                        <span>{item.timeAgo}</span>
+                        {item.freshnessTier && (
+                          <>
+                            <span>•</span>
+                            <span
+                              style={{
+                                color: "var(--crimson)",
+                                fontWeight: 700,
+                                textTransform: "uppercase",
+                                fontSize: "0.68rem",
+                                letterSpacing: "0.04em",
+                              }}
+                            >
+                              Tier {item.freshnessTier}
+                            </span>
+                          </>
                         )}
-                        <span className="badge-source">{article.source}</span>
-                        <span className="badge-date">
-                          <Icons.Clock size={12} /> {dateStr} WIB
-                        </span>
                       </div>
-                    </div>
 
-                    <div className="intel-sync-status">
-                      {article.is_synced_adafakta ? (
-                        <span className="sync-pill-adafakta">
+                      <h4 className="live-item-title">
+                        <a
+                          href={item.url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                        >
+                          {item.title}
+                        </a>
+                      </h4>
+
+                      <p className="live-item-summary">
+                        {item.summary || item.snippet}
+                      </p>
+
+                      <div className="live-item-actions">
+                        <button
+                          onClick={() => handleDispatchLiveTelegram(item)}
+                          disabled={isTeleSent || isTeleLoading}
+                          className="btn-sync-small"
+                        >
+                          <Icons.Telegram size={12} />
+                          {isTeleLoading
+                            ? "Mengirim..."
+                            : isTeleSent
+                            ? "Terkirim ke Telegram"
+                            : "Kirim Telegram"}
+                        </button>
+
+                        <button
+                          onClick={() => handleSaveLiveToDb(item)}
+                          disabled={isDbSaved || isSaveLoading}
+                          className="btn-sync-small"
+                        >
+                          <Icons.Bookmark size={12} />
+                          {isSaveLoading
+                            ? "Menyimpan..."
+                            : isDbSaved
+                            ? "Tersimpan di Radar"
+                            : "Simpan ke Radar"}
+                        </button>
+
+                        <a
+                          href={item.url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="link-read-source"
+                        >
+                          Sumber Asli <Icons.ExternalLink size={10} />
+                        </a>
+                      </div>
+                    </article>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* STREAM HEADER & BATCH ACTION CONTROLS */}
+          <div className="stream-header">
+            <div className="stream-title-group">
+              <h2>
+                {isTechMode
+                  ? "Radar Khusus Teknologi & Inovasi"
+                  : selectedCategory === "ALL"
+                  ? "Arus Intelijen Berita Redaksi"
+                  : `Rubrik: ${selectedCategory}`}
+              </h2>
+              <span className="stream-subtitle">
+                {filteredArticles.length} isu terdeteksi dan dianalisis
+              </span>
+            </div>
+
+            {filteredArticles.length > 0 && (
+              <div className="stream-toolbar">
+                <label className="checkbox-label">
+                  <input
+                    type="checkbox"
+                    checked={isAllSelected}
+                    onChange={handleToggleSelectAll}
+                    className="custom-checkbox"
+                  />
+                  <span>Pilih Semua</span>
+                </label>
+
+                {selectedIds.length > 0 && (
+                  <button
+                    onClick={handleDeleteSelected}
+                    disabled={isDeleting}
+                    className="btn-toolbar-action btn-toolbar-danger"
+                  >
+                    <Icons.Trash size={12} /> Hapus ({selectedIds.length})
+                  </button>
+                )}
+
+                <button
+                  onClick={handleClearAllRadar}
+                  disabled={isDeleting}
+                  className="btn-toolbar-action"
+                  title="Kosongkan seluruh feed radar berita"
+                >
+                  <Icons.Broom size={12} /> Bersihkan Feed
+                </button>
+              </div>
+            )}
+          </div>
+
+          {/* STREAM BERITA */}
+          {filteredArticles.length === 0 ? (
+            <div className="empty-state-editorial">
+              <h3>Tidak ada berita untuk filter saat ini</h3>
+              <p>
+                {isTechMode
+                  ? "Belum ada berita teknologi di arsip. Gunakan kolom Live Scout di samping kanan untuk menyisir berita teknologi terbaru."
+                  : "Gunakan tombol Luncurkan Liputan Sekarang untuk mulai menyisir portal media."}
+              </p>
+            </div>
+          ) : (
+            <div>
+              {/* LEAD STORY (HEADLINE UTAMA) */}
+              {leadStory && (
+                <article className="lead-story-card">
+                  <div className="lead-meta">
+                    {leadStory.is_priority ? (
+                      <span className="badge-lead-priority">
+                        PRIORITAS REDAKSI
+                      </span>
+                    ) : isTechMode ? (
+                      <span className="badge-lead-tech">TEKNOLOGI UTAMA</span>
+                    ) : (
+                      <span className="badge-lead-category">
+                        #{leadStory.category || "UMUM"}
+                      </span>
+                    )}
+
+                    <span className="lead-source">{leadStory.source}</span>
+                    <span className="lead-dateline">
+                      {leadStory.published_at || leadStory.created_at
+                        ? new Date(
+                            leadStory.published_at || leadStory.created_at
+                          ).toLocaleString("id-ID", {
+                            timeZone: "Asia/Bangkok",
+                            dateStyle: "medium",
+                            timeStyle: "short",
+                          })
+                        : "-"}{" "}
+                      WIB
+                    </span>
+                  </div>
+
+                  <h2 className="lead-title">
+                    <a
+                      href={leadStory.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                    >
+                      {leadStory.title}
+                    </a>
+                  </h2>
+
+                  <div className="lead-body">
+                    <p>{leadStory.summary}</p>
+                  </div>
+
+                  <div className="lead-footer">
+                    <div className="lead-actions-left">
+                      {leadStory.is_synced_adafakta ? (
+                        <span className="badge-synced">
                           <Icons.CheckCircle size={12} /> Disetor ke AdaFakta
                         </span>
                       ) : (
                         <button
-                          onClick={() => handleSyncToAdafakta(article.id)}
-                          disabled={syncingAdafaktaId === article.id}
-                          className="btn-sync-adafakta"
-                          title="Klik untuk menyetor berita ini ke Meja Redaksi AdaFakta"
+                          onClick={() => handleSyncToAdafakta(leadStory.id)}
+                          disabled={syncingAdafaktaId === leadStory.id}
+                          className="btn-sync-adafakta-lead"
                         >
-                          <Icons.Rocket size={11} />
-                          {syncingAdafaktaId === article.id
+                          <Icons.Rocket size={12} />
+                          {syncingAdafaktaId === leadStory.id
                             ? "Menyetor..."
-                            : "Setor ke AdaFakta"}
+                            : "Setor ke Meja Redaksi"}
                         </button>
                       )}
-                      {article.sent_at && (
-                        <span className="sync-pill-tele">
-                          <Icons.Telegram size={12} /> Telegram OK
+
+                      {leadStory.sent_at && (
+                        <span
+                          style={{
+                            fontSize: "0.72rem",
+                            fontFamily: "var(--font-masthead)",
+                            fontWeight: 800,
+                            color: "var(--ink-muted)",
+                          }}
+                        >
+                          <Icons.Telegram size={12} /> Terkirim ke Telegram
                         </span>
                       )}
                     </div>
-                  </div>
 
-                  <h3 className="intel-title">
                     <a
-                      href={article.url}
+                      href={leadStory.url}
                       target="_blank"
                       rel="noopener noreferrer"
+                      className="link-read-source"
                     >
-                      {article.title}
+                      Buka Sumber Asli <Icons.ExternalLink size={11} />
                     </a>
-                  </h3>
-
-                  <div className="intel-body">
-                    <div className="intel-summary-label">
-                      BEDAH FAKTA & URGENSI:
-                    </div>
-                    <p className="intel-summary-text">{article.summary}</p>
                   </div>
+                </article>
+              )}
 
-                  <div className="intel-footer">
-                    <div className="intel-actions">
-                      <a
-                        href={article.url}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="link-source"
+              {/* SECONDARY STORIES (BROADSHEET 2-COLUMN GRID) */}
+              {secondaryStories.length > 0 && (
+                <div className="secondary-grid">
+                  {secondaryStories.map((story) => {
+                    const isChecked = selectedIds.includes(story.id);
+                    const dateObj = story.published_at || story.created_at;
+                    const dateStr = dateObj
+                      ? new Date(dateObj).toLocaleDateString("id-ID", {
+                          timeZone: "Asia/Bangkok",
+                          month: "short",
+                          day: "numeric",
+                        })
+                      : "-";
+
+                    return (
+                      <article
+                        key={story.id}
+                        className={`story-card ${isChecked ? "is-checked" : ""}`}
                       >
-                        Buka Sumber Asli <Icons.ExternalLink size={12} />
-                      </a>
-                      <a
-                        href="https://www.adafakta.web.id/admin/jurnalis"
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="link-newsroom"
-                      >
-                        Buka Meja Redaksi AdaFakta <Icons.ExternalLink size={12} />
-                      </a>
-                    </div>
-                  </div>
+                        <div>
+                          <div className="story-meta">
+                            <input
+                              type="checkbox"
+                              checked={isChecked}
+                              onChange={() => handleToggleSelectOne(story.id)}
+                              className="custom-checkbox"
+                            />
+                            <span style={{ fontWeight: 800 }}>
+                              {story.source}
+                            </span>
+                            <span>•</span>
+                            <span>#{story.category || "UMUM"}</span>
+                            <span>•</span>
+                            <span style={{ color: "var(--ink-faint)" }}>
+                              {dateStr}
+                            </span>
+                          </div>
+
+                          <h3 className="story-title">
+                            <a
+                              href={story.url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                            >
+                              {story.title}
+                            </a>
+                          </h3>
+
+                          <p className="story-summary">{story.summary}</p>
+                        </div>
+
+                        <div className="story-footer">
+                          {story.is_synced_adafakta ? (
+                            <span className="badge-synced-small">
+                              <Icons.CheckCircle size={10} /> Disetor
+                            </span>
+                          ) : (
+                            <button
+                              onClick={() => handleSyncToAdafakta(story.id)}
+                              disabled={syncingAdafaktaId === story.id}
+                              className="btn-sync-small"
+                            >
+                              {syncingAdafaktaId === story.id
+                                ? "Menyetor..."
+                                : "Setor Redaksi"}
+                            </button>
+                          )}
+
+                          <a
+                            href={story.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="link-read-source"
+                            style={{ fontSize: "0.7rem" }}
+                          >
+                            Sumber <Icons.ExternalLink size={10} />
+                          </a>
+                        </div>
+                      </article>
+                    );
+                  })}
                 </div>
-              );
-            })}
-          </div>
-        )}
-      </div>
+              )}
+            </div>
+          )}
+        </main>
 
-      {/* 6. MODAL KELOLA KANAL RSS */}
-      {isRssModalOpen && (
-        <div className="modal-overlay">
-          <div className="modal-content">
-            <div className="modal-header">
-              <h3 className="modal-title">
-                <Icons.Rss size={18} /> Manajemen Kanal Berita (RSS Sources)
-              </h3>
+        {/* KOLOM KANAN: EDITORIAL SIDEBAR (32%) */}
+        <aside className="editorial-sidebar-col">
+          {/* SECTION 1: LIVE SEARCH & SCOUT */}
+          <div className="sidebar-section">
+            <div className="sidebar-header">
+              <span className="sidebar-title">
+                <Icons.Search size={14} />{" "}
+                {isTechMode ? "Pencarian Berita Teknologi" : "Penelusuran Live Media"}
+              </span>
+            </div>
+
+            <div className="scout-form-group">
+              <input
+                type="text"
+                placeholder={
+                  isTechMode
+                    ? "Cari AI, startup, gadget, chip..."
+                    : "Ketik isu, figur, peristiwa kritis..."
+                }
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    handleLiveSearch();
+                  }
+                }}
+                className="scout-input-field"
+              />
+
+              <div className="scout-options-row">
+                <select
+                  value={selectedTimeRange}
+                  onChange={(e) => setSelectedTimeRange(e.target.value as any)}
+                  className="scout-select-field"
+                >
+                  <option value="30m">⚡ 30 Menit (Bertahap)</option>
+                  <option value="1h">⏱️ 1 Jam Terakhir</option>
+                  <option value="90m">⏱️ 1.5 Jam Terakhir</option>
+                  <option value="2h">⏱️ 2 Jam Terakhir</option>
+                  <option value="4h">⏱️ 4 Jam Terakhir</option>
+                  <option value="24h">📅 24 Jam Terakhir</option>
+                  <option value="7d">📅 7 Hari Terakhir</option>
+                  <option value="all">🌐 Semua Waktu</option>
+                </select>
+
+                <select
+                  value={selectedRegion}
+                  onChange={(e) => setSelectedRegion(e.target.value as any)}
+                  className="scout-select-field"
+                >
+                  <option value="ID">Indonesia</option>
+                  <option value="GLOBAL">Global / Internasional</option>
+                  <option value="US">Amerika Serikat</option>
+                  <option value="ASIA">Asia Pasifik</option>
+                </select>
+              </div>
+
               <button
-                onClick={() => setIsRssModalOpen(false)}
-                className="modal-close-btn"
+                onClick={() => handleLiveSearch()}
+                disabled={isLiveSearching}
+                className="btn-scout-submit"
               >
-                <Icons.Close size={18} />
+                <Icons.Zap size={14} />
+                <span>{isLiveSearching ? "Menelusuri..." : "Telusuri Berita"}</span>
               </button>
             </div>
 
-            <div className="modal-body">
-              {/* Form Tambah Sumber */}
-              <form onSubmit={handleAddSource} className="form-group">
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
+            {/* QUICK TOPIC CHIPS */}
+            <div style={{ marginTop: "12px" }}>
+              <div
+                style={{
+                  fontSize: "0.68rem",
+                  fontFamily: "var(--font-masthead)",
+                  fontWeight: 800,
+                  textTransform: "uppercase",
+                  color: "var(--ink-muted)",
+                  marginBottom: "6px",
+                }}
+              >
+                {isTechMode ? "TOPIK TEKNOLOGI KILAT:" : "TOPIK HANGAT REDAKSI:"}
+              </div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: "5px" }}>
+                {quickTopics.map((topic) => (
+                  <button
+                    key={topic}
+                    onClick={() => {
+                      setSearchQuery(topic);
+                      handleLiveSearch(topic);
+                    }}
+                    style={{
+                      padding: "3px 7px",
+                      fontSize: "0.72rem",
+                      border: "1px solid var(--hairline)",
+                      backgroundColor: "var(--paper)",
+                      cursor: "pointer",
+                      fontFamily: "var(--font-body)",
+                    }}
+                  >
+                    {topic}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          {/* SECTION 2: INDEKS TOPIK HANGAT 24 JAM */}
+          <div className="sidebar-section">
+            <div className="sidebar-header">
+              <span className="sidebar-title">
+                <Icons.Target size={14} /> Indeks Isu Terhangat
+              </span>
+            </div>
+
+            <div className="trending-index-list">
+              {initialTrendingTopics.length > 0 ? (
+                initialTrendingTopics.map((item, idx) => (
+                  <button
+                    key={item.topic}
+                    onClick={() => setSearchQuery(item.topic)}
+                    className="trending-index-item"
+                    title={`Klik untuk menyaring topik "${item.topic}"`}
+                  >
+                    <span className="trending-rank">{idx + 1}.</span>
+                    <span className="trending-name">{item.topic}</span>
+                    <span className="trending-count">{item.count} liputan</span>
+                  </button>
+                ))
+              ) : (
+                <div style={{ fontSize: "0.78rem", color: "var(--ink-faint)" }}>
+                  Belum ada topik dominan.
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* SECTION 3: DISTRIBUSI RUBRIK LIPUTAN */}
+          <div className="sidebar-section">
+            <div className="sidebar-header">
+              <span className="sidebar-title">
+                <Icons.Newspaper size={14} /> Distribusi Rubrik
+              </span>
+            </div>
+
+            <div className="editorial-segmented-bar">
+              {initialCategoryStats.length > 0 ? (
+                initialCategoryStats.map((item) => (
+                  <div
+                    key={item.category}
+                    className="bar-segment"
+                    style={{
+                      width: `${item.percentage}%`,
+                      backgroundColor: item.color,
+                    }}
+                    onClick={() => setSelectedCategory(item.category)}
+                    title={`${item.category}: ${item.percentage}% (${item.count} isu)`}
+                  />
+                ))
+              ) : (
+                <div style={{ width: "100%", backgroundColor: "#e2ded8" }} />
+              )}
+            </div>
+
+            <div className="distribution-legend">
+              {initialCategoryStats.map((item) => (
+                <button
+                  key={item.category}
+                  onClick={() => setSelectedCategory(item.category)}
+                  className="legend-btn"
+                >
+                  <span style={{ display: "flex", alignItems: "center", gap: "5px" }}>
+                    <span
+                      style={{
+                        width: "8px",
+                        height: "8px",
+                        backgroundColor: item.color,
+                        display: "inline-block",
+                      }}
+                    />
+                    <span>{item.category}</span>
+                  </span>
+                  <span style={{ fontWeight: 700 }}>{item.percentage}%</span>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* SECTION 4: KELOLA SUMBER & RETENSI DATA */}
+          <div className="sidebar-section">
+            <div className="sidebar-header">
+              <span className="sidebar-title">
+                <Icons.Clock size={14} /> Manajemen Redaksi
+              </span>
+            </div>
+
+            <div className="quick-tools-grid">
+              <button
+                onClick={() => setIsRssModalOpen(true)}
+                className="btn-sidebar-tool"
+              >
+                <Icons.Rss size={13} /> Kanal RSS ({sourcesList.length})
+              </button>
+
+              <button
+                onClick={() => setIsKeywordModalOpen(true)}
+                className="btn-sidebar-tool"
+              >
+                <Icons.Target size={13} /> Kata Kunci ({keywordsList.length})
+              </button>
+            </div>
+
+            {/* RETENSI DATA BASI */}
+            <div style={{ marginTop: "12px" }}>
+              <div
+                style={{
+                  fontSize: "0.68rem",
+                  fontFamily: "var(--font-masthead)",
+                  fontWeight: 800,
+                  textTransform: "uppercase",
+                  color: "var(--ink-muted)",
+                  marginBottom: "4px",
+                }}
+              >
+                Retensi Data Basi:
+              </div>
+              <div style={{ display: "flex", gap: "6px" }}>
+                <select
+                  value={
+                    retentionDays === null ? "disabled" : String(retentionDays)
+                  }
+                  onChange={handleChangeRetention}
+                  className="scout-select-field"
+                  style={{ flex: 1 }}
+                >
+                  <option value="3">Pangkas &gt; 3 Hari</option>
+                  <option value="7">Pangkas &gt; 7 Hari</option>
+                  <option value="14">Pangkas &gt; 14 Hari</option>
+                  <option value="30">Pangkas &gt; 30 Hari</option>
+                  <option value="disabled">Simpan Permanen</option>
+                </select>
+
+                <button
+                  onClick={handleManualPrune}
+                  disabled={isPruning || retentionDays === null}
+                  className="btn-sidebar-tool"
+                  title="Pangkas data basi sekarang"
+                >
+                  <Icons.Broom size={12} />
+                  <span>{isPruning ? "Memangkas..." : "Pangkas"}</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </aside>
+      </div>
+
+      {/* TOAST NOTIFIKASI */}
+      {scoutMessage && (
+        <div className="editorial-toast">
+          <span>{scoutMessage}</span>
+          <button
+            onClick={() => setScoutMessage(null)}
+            style={{
+              background: "transparent",
+              border: "none",
+              color: "#ffffff",
+              cursor: "pointer",
+            }}
+          >
+            <Icons.Close size={14} />
+          </button>
+        </div>
+      )}
+
+      {/* MODAL KELOLA KANAL RSS */}
+      {isRssModalOpen && (
+        <div className="editorial-modal-overlay">
+          <div className="editorial-modal-box">
+            <div className="editorial-modal-header">
+              <span className="editorial-modal-title">
+                Manajemen Kanal Media (RSS Sources)
+              </span>
+              <button
+                onClick={() => setIsRssModalOpen(false)}
+                style={{
+                  background: "transparent",
+                  border: "none",
+                  cursor: "pointer",
+                }}
+              >
+                <Icons.Close size={16} />
+              </button>
+            </div>
+
+            <div className="editorial-modal-body">
+              <form onSubmit={handleAddSource} style={{ marginBottom: "16px" }}>
+                <div
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: "1fr 1fr",
+                    gap: "8px",
+                    marginBottom: "8px",
+                  }}
+                >
                   <input
                     type="text"
-                    placeholder="Nama Media (misal: Tempo, Kompas)"
+                    placeholder="Nama Media (misal: Tempo, TechCrunch)"
                     value={newRssName}
                     onChange={(e) => setNewRssName(e.target.value)}
-                    className="form-input"
+                    className="scout-input-field"
                     required
                   />
                   <select
                     value={newRssCat}
                     onChange={(e) => setNewRssCat(e.target.value)}
-                    className="form-input"
+                    className="scout-select-field"
                   >
                     <option value="UMUM">Rubrik: UMUM</option>
+                    <option value="TEKNO">Rubrik: TEKNO</option>
                     <option value="POLITIK">Rubrik: POLITIK</option>
                     <option value="HUKUM">Rubrik: HUKUM</option>
                     <option value="BISNIS">Rubrik: BISNIS</option>
-                    <option value="TEKNO">Rubrik: TEKNO</option>
+                    <option value="LINGKUNGAN">Rubrik: LINGKUNGAN</option>
                     <option value="INTERNASIONAL">Rubrik: INTERNASIONAL</option>
-                    <option value="NASIONAL">Rubrik: NASIONAL</option>
                   </select>
                 </div>
                 <input
@@ -1397,20 +1554,16 @@ export default function CommandCenterView({
                   placeholder="URL RSS Feed (contoh: https://tempo.co/rss)"
                   value={newRssUrl}
                   onChange={(e) => setNewRssUrl(e.target.value)}
-                  className="form-input"
+                  className="scout-input-field"
+                  style={{ marginBottom: "8px" }}
                   required
                 />
-                <button
-                  type="submit"
-                  className="btn-trigger"
-                  style={{ alignSelf: "flex-start", marginTop: "4px" }}
-                >
-                  <Icons.Plus size={15} /> Tambah Sumber RSS Baru
+                <button type="submit" className="btn-scout-submit">
+                  <Icons.Plus size={14} /> Tambah Kanal RSS
                 </button>
               </form>
 
-              {/* Daftar Sumber */}
-              <table className="item-list-table">
+              <table className="modal-table">
                 <thead>
                   <tr>
                     <th>MEDIA</th>
@@ -1424,25 +1577,48 @@ export default function CommandCenterView({
                     <tr key={src.id}>
                       <td>
                         <strong>{src.name}</strong>
-                        <div style={{ fontSize: "0.75rem", color: "var(--text-dim)" }}>
+                        <div
+                          style={{
+                            fontSize: "0.72rem",
+                            color: "var(--ink-faint)",
+                          }}
+                        >
                           {src.url}
                         </div>
                       </td>
                       <td>
-                        <span className="badge-category">#{src.category || "UMUM"}</span>
+                        <span style={{ fontWeight: 700 }}>
+                          #{src.category || "UMUM"}
+                        </span>
                       </td>
                       <td>
                         <button
                           onClick={() => handleToggleSource(src.id, src.active)}
-                          className={`btn-small-toggle ${src.active ? "is-active" : "is-inactive"}`}
+                          style={{
+                            padding: "3px 6px",
+                            fontSize: "0.68rem",
+                            fontFamily: "var(--font-masthead)",
+                            fontWeight: 800,
+                            border: "1px solid var(--hairline)",
+                            background: src.active ? "var(--forest-subtle)" : "transparent",
+                            color: src.active ? "var(--forest)" : "var(--ink-faint)",
+                            cursor: "pointer",
+                          }}
                         >
-                          {src.active ? "🟢 Aktif" : "⚪ Nonaktif"}
+                          {src.active ? "AKTIF" : "NONAKTIF"}
                         </button>
                       </td>
                       <td>
                         <button
                           onClick={() => handleDeleteSource(src.id)}
-                          className="btn-small-danger"
+                          style={{
+                            color: "var(--crimson)",
+                            border: "none",
+                            background: "transparent",
+                            cursor: "pointer",
+                            fontSize: "0.75rem",
+                            fontWeight: 700,
+                          }}
                         >
                           Hapus
                         </button>
@@ -1453,10 +1629,10 @@ export default function CommandCenterView({
               </table>
             </div>
 
-            <div className="modal-footer">
+            <div className="editorial-modal-footer">
               <button
                 onClick={() => setIsRssModalOpen(false)}
-                className="btn-outline-action"
+                className="btn-toolbar-action"
               >
                 Tutup
               </button>
@@ -1465,55 +1641,82 @@ export default function CommandCenterView({
         </div>
       )}
 
-      {/* 7. MODAL FOKUS KATA KUNCI PRIORITAS */}
+      {/* MODAL KELOLA KATA KUNCI PRIORITAS */}
       {isKeywordModalOpen && (
-        <div className="modal-overlay">
-          <div className="modal-content">
-            <div className="modal-header">
-              <h3 className="modal-title">
-                <Icons.Target size={18} /> Fokus Topik & Kata Kunci Prioritas
-              </h3>
+        <div className="editorial-modal-overlay">
+          <div className="editorial-modal-box">
+            <div className="editorial-modal-header">
+              <span className="editorial-modal-title">
+                Fokus Isu & Kata Kunci Prioritas
+              </span>
               <button
                 onClick={() => setIsKeywordModalOpen(false)}
-                className="modal-close-btn"
+                style={{
+                  background: "transparent",
+                  border: "none",
+                  cursor: "pointer",
+                }}
               >
-                <Icons.Close size={18} />
+                <Icons.Close size={16} />
               </button>
             </div>
 
-            <div className="modal-body">
-              <p style={{ fontSize: "0.85rem", color: "var(--text-muted)" }}>
-                Berita yang mengandung kata kunci di bawah ini akan otomatis
-                diprioritaskan oleh bot, diberi label{" "}
-                <strong>🚨 ULTRA HIGH PRIORITY</strong>, dan dianalisis secara
-                lebih mendesak.
+            <div className="editorial-modal-body">
+              <p
+                style={{
+                  fontSize: "0.82rem",
+                  color: "var(--ink-muted)",
+                  marginBottom: "12px",
+                }}
+              >
+                Berita yang mengandung kata kunci ini akan otomatis diprioritaskan
+                sebagai <strong>PRIORITAS REDAKSI</strong> dan ditempatkan di
+                posisi teratas.
               </p>
 
-              {/* Form Tambah Kata Kunci */}
-              <form onSubmit={handleAddKeyword} style={{ display: "flex", gap: "8px" }}>
+              <form
+                onSubmit={handleAddKeyword}
+                style={{ display: "flex", gap: "8px", marginBottom: "14px" }}
+              >
                 <input
                   type="text"
-                  placeholder="Ketik topik (contoh: Korupsi, Pilkada, KPK, Pajak)..."
+                  placeholder="Ketik topik (contoh: Greenpeace, AI, KPK, Subsidi)..."
                   value={newKeywordInput}
                   onChange={(e) => setNewKeywordInput(e.target.value)}
-                  className="form-input"
+                  className="scout-input-field"
                   style={{ flex: 1 }}
                   required
                 />
-                <button type="submit" className="btn-trigger">
-                  <Icons.Plus size={15} /> Tambah
+                <button type="submit" className="btn-scout-submit">
+                  <Icons.Plus size={14} /> Tambah
                 </button>
               </form>
 
-              {/* Tag Cloud Kata Kunci */}
-              <div className="tag-cloud" style={{ marginTop: "12px" }}>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: "6px" }}>
                 {keywordsList.map((kw) => (
-                  <span key={kw.id} className="keyword-tag">
-                    🎯 {kw.keyword}
+                  <span
+                    key={kw.id}
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: "6px",
+                      padding: "4px 8px",
+                      background: "var(--canvas-subtle)",
+                      border: "1px solid var(--hairline)",
+                      fontSize: "0.78rem",
+                      fontWeight: 600,
+                    }}
+                  >
+                    <span>{kw.keyword}</span>
                     <button
                       onClick={() => handleDeleteKeyword(kw.id)}
-                      className="keyword-tag-delete"
-                      title="Hapus kata kunci"
+                      style={{
+                        background: "transparent",
+                        border: "none",
+                        color: "var(--crimson)",
+                        cursor: "pointer",
+                        fontWeight: 800,
+                      }}
                     >
                       ✕
                     </button>
@@ -1522,10 +1725,10 @@ export default function CommandCenterView({
               </div>
             </div>
 
-            <div className="modal-footer">
+            <div className="editorial-modal-footer">
               <button
                 onClick={() => setIsKeywordModalOpen(false)}
-                className="btn-outline-action"
+                className="btn-toolbar-action"
               >
                 Tutup
               </button>

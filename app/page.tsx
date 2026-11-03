@@ -8,6 +8,7 @@ import CommandCenterView, {
   MetricStats,
   RssSourceItem,
   KeywordItem,
+  CategoryBreakdownMap,
 } from "./CommandCenterView";
 
 export const dynamic = "force-dynamic";
@@ -19,6 +20,7 @@ export default async function Page() {
   let sources: RssSourceItem[] = [];
   let keywords: KeywordItem[] = [];
   let retentionDays: number | null = 7;
+  const categoryBreakdown: CategoryBreakdownMap = {};
 
   const metrics: MetricStats = {
     totalMonitored: 0,
@@ -46,6 +48,26 @@ export default async function Page() {
     // 2. Ambil metrik ringkas
     const countAll = await sql`SELECT count(*)::int as count FROM articles;`;
     const countSent = await sql`SELECT count(*)::int as count FROM articles WHERE sent_at IS NOT NULL;`;
+    const countSynced = await sql`SELECT count(*)::int as count FROM articles WHERE is_synced_adafakta = true;`;
+
+    // 2.1 Ambil metrik breakdown per kategori di database untuk ribbon reaktif
+    const breakdownRows = await sql`
+      SELECT 
+        COALESCE(UPPER(category), 'UMUM') as category,
+        count(*)::int as monitored,
+        count(case when sent_at is not null then 1 end)::int as sent,
+        count(case when is_synced_adafakta = true then 1 end)::int as synced
+      FROM articles
+      GROUP BY category;
+    `;
+
+    for (const r of breakdownRows as any[]) {
+      categoryBreakdown[r.category] = {
+        monitored: Number(r.monitored || 0),
+        sent: Number(r.sent || 0),
+        synced: Number(r.synced || 0),
+      };
+    }
 
     // 3. Ambil sumber RSS
     const sourcesRows = await sql`
@@ -66,7 +88,7 @@ export default async function Page() {
     const activeSources = sources.filter((s) => s.active);
 
     metrics.totalMonitored = countAll[0]?.count || articles.length;
-    metrics.totalTransferred = articles.length;
+    metrics.totalTransferred = countSynced[0]?.count || 0;
     metrics.totalSentTelegram = countSent[0]?.count || 0;
     metrics.activeFeedsCount = activeSources.length || 6;
   } catch (err) {
@@ -87,6 +109,7 @@ export default async function Page() {
         initialRetentionDays={retentionDays}
         initialCategoryStats={categoryStats}
         initialTrendingTopics={trendingTopics}
+        initialCategoryBreakdown={categoryBreakdown}
       />
     </main>
   );

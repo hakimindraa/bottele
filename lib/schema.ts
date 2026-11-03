@@ -44,10 +44,17 @@ export async function ensureDatabaseSchema() {
       { name: "CNN Indonesia", url: "https://www.cnnindonesia.com/nasional/rss", category: "NASIONAL" },
       { name: "Greenpeace Indonesia", url: "https://www.greenpeace.org/indonesia/feed/", category: "LINGKUNGAN" },
       { name: "CNBC Indonesia", url: "https://www.cnbcindonesia.com/news/rss", category: "BISNIS" },
+      { name: "Google News Bisnis", url: "https://news.google.com/rss/headlines/section/topic/BUSINESS?hl=id&gl=ID&ceid=ID:id", category: "BISNIS" },
       { name: "TechCrunch", url: "https://techcrunch.com/feed/", category: "TEKNO" },
       { name: "DailySocial", url: "https://dailysocial.id/feed", category: "TEKNO" },
+      { name: "DetikINET", url: "https://inet.detik.com/rss", category: "TEKNO" },
+      { name: "Antara Tekno", url: "https://www.antaranews.com/rss/tekno.xml", category: "TEKNO" },
+      { name: "The Verge", url: "https://www.theverge.com/rss/index.xml", category: "TEKNO" },
+      { name: "Google News Tekno ID", url: "https://news.google.com/rss/headlines/section/topic/TECHNOLOGY?hl=id&gl=ID&ceid=ID:id", category: "TEKNO" },
       { name: "BBC World", url: "https://feeds.bbci.co.uk/news/world/rss.xml", category: "INTERNASIONAL" },
+      { name: "Google News Dunia ID", url: "https://news.google.com/rss/headlines/section/topic/WORLD?hl=id&gl=ID&ceid=ID:id", category: "INTERNASIONAL" },
       { name: "Antara News", url: "https://www.antaranews.com/rss/terkini.xml", category: "NASIONAL" },
+      { name: "CNN Indonesia Politik", url: "https://www.cnnindonesia.com/nasional/politik/rss", category: "POLITIK" },
       { name: "BBC Indonesia", url: "https://feeds.bbci.co.uk/indonesia/rss.xml", category: "NASIONAL" },
     ];
 
@@ -69,7 +76,17 @@ export async function ensureDatabaseSchema() {
       "Diplomat",
       "Geopolitik",
       "Kebijakan",
-      "KPK"
+      "KPK",
+      "Artificial Intelligence",
+      "OpenAI",
+      "Nvidia",
+      "Semikonduktor",
+      "Cybersecurity",
+      "Startup",
+      "Gadget",
+      "Apple",
+      "Android",
+      "Data Center"
     ];
 
     for (const kw of essentialKeywords) {

@@ -4,12 +4,24 @@ import { runDailyDigest } from "@/lib/pipeline";
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
-export async function POST() {
+export async function POST(req: Request) {
   try {
-    const result = await runDailyDigest();
+    let targetCategory: string | undefined;
+    try {
+      const body = await req.json();
+      if (body && body.category) {
+        targetCategory = String(body.category).toUpperCase();
+      }
+    } catch {
+      // Body kosong / tidak dikirimkan, gunakan mode default
+    }
+
+    const result = await runDailyDigest(targetCategory);
+    const tierMsg = result.freshnessTier ? ` [${result.freshnessTier}]` : "";
+    const categoryName = targetCategory ? `rubrik ${targetCategory}` : "semua rubrik";
     return NextResponse.json({
       success: true,
-      message: "Liputan jurnalis berhasil dijalankan",
+      message: `Liputan ${categoryName} berhasil dijalankan${tierMsg}: ${result.fetched} berita terdeteksi.`,
       result,
     });
   } catch (error) {
