@@ -8,6 +8,7 @@ import {
   DEFAULT_PERSISTENT_KEYBOARD,
 } from "@/lib/telegram";
 import { sendToAdafakta } from "@/lib/adafakta";
+import { notifyKantorAI } from "@/lib/kantorAiNotifier";
 
 export interface ArticleRow {
   id: number;
@@ -71,6 +72,12 @@ export async function runDailyDigest(targetCategory?: string): Promise<DigestRes
       `;
       if (res && res.length > 0) {
         inserted++;
+        notifyKantorAI({
+          action: "bottele_rss_scraped",
+          title: item.title,
+          source: item.source,
+          category: itemCat,
+        });
       }
     } catch (error) {
       console.error(`Gagal menyimpan artikel ${item.url}:`, error);
@@ -175,6 +182,15 @@ export async function runDailyDigest(targetCategory?: string): Promise<DigestRes
         category: currentCategory,
       });
 
+      if (adafaktaSuccess) {
+        notifyKantorAI({
+          action: "bottele_synced_adafakta",
+          title: article.title,
+          source: article.source,
+          category: currentCategory,
+        });
+      }
+
       // Format Laporan Intelijen Redaksi untuk Telegram Pager
       const safeTitle = escapeHtml(article.title);
       const safeSummary = escapeHtml(currentSummary);
@@ -228,6 +244,13 @@ export async function runDailyDigest(targetCategory?: string): Promise<DigestRes
 
       // Kirim Pager Alert ke Telegram dengan Persistent Keyboard
       await sendTelegram(message, buttons, undefined, DEFAULT_PERSISTENT_KEYBOARD);
+
+      notifyKantorAI({
+        action: "bottele_dispatch_telegram",
+        title: article.title,
+        source: article.source,
+        category: currentCategory,
+      });
 
       // Tandai sudah terkirim
       await sql`

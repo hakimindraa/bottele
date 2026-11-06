@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { sql } from "@/lib/db";
 import { sendToAdafakta } from "@/lib/adafakta";
+import { notifyKantorAI } from "@/lib/kantorAiNotifier";
 
 export const dynamic = "force-dynamic";
 
@@ -53,6 +54,23 @@ export async function POST(request: Request) {
           is_synced_adafakta = CASE WHEN EXCLUDED.is_synced_adafakta THEN true ELSE articles.is_synced_adafakta END
       RETURNING id;
     `;
+
+    // 3. Beri tahu Kantor AI 3D Office
+    notifyKantorAI({
+      action: "bottele_rss_scraped",
+      title,
+      source,
+      category,
+    });
+
+    if (adafaktaSuccess) {
+      notifyKantorAI({
+        action: "bottele_synced_adafakta",
+        title,
+        source,
+        category,
+      });
+    }
 
     return NextResponse.json({
       success: true,

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { sql } from "@/lib/db";
 import { sendToAdafakta } from "@/lib/adafakta";
+import { notifyKantorAI } from "@/lib/kantorAiNotifier";
 
 export const dynamic = "force-dynamic";
 
@@ -54,6 +55,14 @@ export async function POST(request: Request) {
       SET is_synced_adafakta = true
       WHERE id = ${id};
     `;
+
+    // Beri tahu Meja 3D Kantor AI bahwa ada berita yang berhasil disetor ke AdaFakta
+    notifyKantorAI({
+      action: "bottele_synced_adafakta",
+      title: String(art.title),
+      source: String(art.source),
+      category: String(art.category || "Teknologi"),
+    });
 
     return NextResponse.json({
       success: true,

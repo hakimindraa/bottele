@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { escapeHtml, sendTelegram, DEFAULT_PERSISTENT_KEYBOARD } from "@/lib/telegram";
+import { notifyKantorAI } from "@/lib/kantorAiNotifier";
 
 export const dynamic = "force-dynamic";
 
@@ -59,6 +60,14 @@ export async function POST(request: Request) {
     ];
 
     await sendTelegram(message, inlineButtons, undefined, DEFAULT_PERSISTENT_KEYBOARD);
+
+    // Beri tahu Kantor AI bahwa ada siaran alert Telegram
+    notifyKantorAI({
+      action: "bottele_dispatch_telegram",
+      title,
+      source,
+      category,
+    });
 
     return NextResponse.json({
       success: true,
