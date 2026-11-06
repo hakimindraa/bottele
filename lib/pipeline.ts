@@ -32,6 +32,9 @@ export interface DigestResult {
 }
 
 export async function runDailyDigest(targetCategory?: string): Promise<DigestResult> {
+  const startTime = Date.now();
+  const MAX_TIME_BUDGET_MS = 22000; // 22 detik batas aman sebelum batas 30s cron-job.org
+
   let fetched = 0;
   let inserted = 0;
   let sent = 0;
@@ -113,10 +116,10 @@ export async function runDailyDigest(targetCategory?: string): Promise<DigestRes
       FROM ranked_articles
       WHERE rank_in_cat <= 1
       ORDER BY is_priority DESC, published_at DESC NULLS LAST
-      LIMIT 6;
+      LIMIT ${maxArticles};
     `) as unknown as ArticleRow[];
 
-    pendingArticles = structuredRows;
+    pendingArticles = structuredRows.slice(0, maxArticles);
 
     // Jika antrean terpartisi masih kurang dari 2 artikel, lengkapi dengan antrean umum pending
     if (pendingArticles.length < 2) {
@@ -135,11 +138,21 @@ export async function runDailyDigest(targetCategory?: string): Promise<DigestRes
           seenIds.add(row.id);
         }
       }
+      pendingArticles = pendingArticles.slice(0, maxArticles);
     }
   }
 
   // d, e, f. Bedah fakta kritis, klasifikasi kategori, transfer ke AdaFakta, dan tembak Telegram Pager
   for (const article of pendingArticles) {
+    // Time-Budget Guard: Jika total proses mendekati 22 detik, hentikan antrean artikel berikutnya
+    // agar cronjob sempat merespons 200 OK dengan sukses ke cron-job.org sebelum timeout 30s
+    if (Date.now() - startTime > MAX_TIME_BUDGET_MS) {
+      console.warn(
+        `[Pipeline] Time-budget guard aktif (${Math.round((Date.now() - startTime) / 1000)}s). Menghentikan sisa antrean agar cronjob tidak timeout.`
+      );
+      break;
+    }
+
     try {
       let currentSummary = article.summary;
       let currentCategory = article.category || "UMUM";

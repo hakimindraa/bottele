@@ -56,6 +56,7 @@ export interface RssFeedConfig {
 }
 
 const parser = new Parser({
+  timeout: 5000,
   headers: {
     "User-Agent":
       "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
@@ -170,49 +171,51 @@ export async function fetchRecentItems(targetCategory?: string): Promise<RecentI
     }
   }
 
-  for (const feedConfig of feedConfigs) {
-    try {
-      const feed = await parser.parseURL(feedConfig.url);
-      const source = feedConfig.name || cleanSourceName(feed.title, feedConfig.url);
+  await Promise.allSettled(
+    feedConfigs.map(async (feedConfig) => {
+      try {
+        const feed = await parser.parseURL(feedConfig.url);
+        const source = feedConfig.name || cleanSourceName(feed.title, feedConfig.url);
 
-      for (const item of feed.items || []) {
-        const title = item.title?.trim();
-        const url = item.link?.trim();
+        for (const item of feed.items || []) {
+          const title = item.title?.trim();
+          const url = item.link?.trim();
 
-        if (!title || !url) {
-          continue;
+          if (!title || !url) {
+            continue;
+          }
+
+          const dateStr = item.isoDate || item.pubDate;
+          if (!dateStr) {
+            continue;
+          }
+
+          const publishedAt = new Date(dateStr);
+          if (isNaN(publishedAt.getTime())) {
+            continue;
+          }
+
+          if (publishedAt.getTime() < twentyFourHoursAgo) {
+            continue;
+          }
+
+          const rawSnippet = item.contentSnippet || item.content || "";
+          const snippet = rawSnippet.slice(0, 1500);
+
+          items.push({
+            source,
+            title,
+            url,
+            publishedAt,
+            snippet,
+            category: feedConfig.category || targetCategory || "UMUM",
+          });
         }
-
-        const dateStr = item.isoDate || item.pubDate;
-        if (!dateStr) {
-          continue;
-        }
-
-        const publishedAt = new Date(dateStr);
-        if (isNaN(publishedAt.getTime())) {
-          continue;
-        }
-
-        if (publishedAt.getTime() < twentyFourHoursAgo) {
-          continue;
-        }
-
-        const rawSnippet = item.contentSnippet || item.content || "";
-        const snippet = rawSnippet.slice(0, 1500);
-
-        items.push({
-          source,
-          title,
-          url,
-          publishedAt,
-          snippet,
-          category: feedConfig.category || targetCategory || "UMUM",
-        });
+      } catch (error) {
+        console.error(`Gagal membaca feed dari ${feedConfig.url}:`, error);
       }
-    } catch (error) {
-      console.error(`Gagal membaca feed dari ${feedConfig.url}:`, error);
-    }
-  }
+    })
+  );
 
   // Urutkan item dari yang paling baru
   items.sort((a, b) => b.publishedAt.getTime() - a.publishedAt.getTime());
