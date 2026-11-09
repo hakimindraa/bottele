@@ -58,6 +58,7 @@ export default function CommandCenterView({
   initialCategoryStats = [],
   initialTrendingTopics = [],
   initialCategoryBreakdown = {},
+  initialAiModel = "yet/deepseek-v4.1-flash",
 }: {
   initialArticles: ArticleItem[];
   metrics: MetricStats;
@@ -68,6 +69,7 @@ export default function CommandCenterView({
   initialCategoryStats?: CategoryStat[];
   initialTrendingTopics?: TrendingTopic[];
   initialCategoryBreakdown?: CategoryBreakdownMap;
+  initialAiModel?: string;
 }) {
   const router = useRouter();
 
@@ -118,6 +120,35 @@ export default function CommandCenterView({
     initialRetentionDays ?? 7
   );
   const [isPruning, setIsPruning] = useState<boolean>(false);
+
+  // Model AI Redaksi
+  const [aiModel, setAiModel] = useState<string>(initialAiModel);
+  const [isUpdatingModel, setIsUpdatingModel] = useState<boolean>(false);
+  const [isCustomModel, setIsCustomModel] = useState<boolean>(false);
+  const [customModelInput, setCustomModelInput] = useState<string>("");
+
+  async function handleChangeAiModel(newModel: string) {
+    setIsUpdatingModel(true);
+    try {
+      const res = await fetch("/api/settings/ai-model", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ model: newModel }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setAiModel(data.model);
+        setScoutMessage(data.message);
+        setIsCustomModel(false);
+      } else {
+        alert(data.error || "Gagal mengubah model AI");
+      }
+    } catch {
+      alert("Gagal menghubungi server untuk mengubah model AI");
+    } finally {
+      setIsUpdatingModel(false);
+    }
+  }
 
   // Modal RSS & Kata Kunci
   const [isRssModalOpen, setIsRssModalOpen] = useState<boolean>(false);
@@ -1474,6 +1505,102 @@ export default function CommandCenterView({
                   <span>{isPruning ? "Memangkas..." : "Pangkas"}</span>
                 </button>
               </div>
+            </div>
+
+            {/* PENGATURAN MODEL AI REDAKSI */}
+            <div style={{ marginTop: "14px" }}>
+              <div
+                style={{
+                  fontSize: "0.68rem",
+                  fontFamily: "var(--font-masthead)",
+                  fontWeight: 800,
+                  textTransform: "uppercase",
+                  color: "var(--ink-muted)",
+                  marginBottom: "4px",
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                }}
+              >
+                <span>Model AI Redaksi:</span>
+                <span
+                  style={{
+                    color: isUpdatingModel ? "var(--crimson)" : "var(--forest)",
+                    fontSize: "0.65rem",
+                    fontWeight: 700,
+                  }}
+                >
+                  {isUpdatingModel ? "Menyimpan..." : "Aktif"}
+                </span>
+              </div>
+
+              <select
+                value={
+                  [
+                    "yet/deepseek-v4.1-flash",
+                    "yet/glm-5.3-flash",
+                    "groqku/openai/gpt-oss-120b",
+                    "ag/claude-opus-4-6-thinking",
+                  ].includes(aiModel)
+                    ? aiModel
+                    : "custom"
+                }
+                onChange={(e) => {
+                  const val = e.target.value;
+                  if (val === "custom") {
+                    setIsCustomModel(true);
+                    setCustomModelInput(aiModel);
+                  } else {
+                    setIsCustomModel(false);
+                    handleChangeAiModel(val);
+                  }
+                }}
+                className="scout-select-field"
+                disabled={isUpdatingModel}
+                style={{
+                  width: "100%",
+                  marginBottom: isCustomModel ? "6px" : "0px",
+                }}
+              >
+                <option value="yet/deepseek-v4.1-flash">
+                  ⚡ DeepSeek V4.1 Flash (Rekomendasi Cepat)
+                </option>
+                <option value="yet/glm-5.3-flash">
+                  ⚡ GLM 5.3 Flash (Cepat &amp; Hemat)
+                </option>
+                <option value="groqku/openai/gpt-oss-120b">
+                  ⚡ GPT OSS 120B (Open Source Cepat)
+                </option>
+                <option value="ag/claude-opus-4-6-thinking">
+                  🧠 Claude Opus 4.6 (Thinking Mode)
+                </option>
+                <option value="custom">✏️ Model Kustom Lainnya...</option>
+              </select>
+
+              {isCustomModel && (
+                <div style={{ display: "flex", gap: "6px", marginTop: "4px" }}>
+                  <input
+                    type="text"
+                    placeholder="Contoh: yet/glm-5.3-flash"
+                    value={customModelInput}
+                    onChange={(e) => setCustomModelInput(e.target.value)}
+                    className="scout-input-field"
+                    style={{ flex: 1, fontSize: "0.75rem", padding: "4px 8px" }}
+                  />
+                  <button
+                    onClick={() => {
+                      if (customModelInput.trim()) {
+                        handleChangeAiModel(customModelInput.trim());
+                      }
+                    }}
+                    disabled={isUpdatingModel || !customModelInput.trim()}
+                    className="btn-sidebar-tool"
+                    style={{ padding: "0 10px", fontSize: "0.72rem" }}
+                  >
+                    Simpan
+                  </button>
+                </div>
+              )}
             </div>
           </div>
         </aside>

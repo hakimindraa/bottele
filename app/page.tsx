@@ -1,5 +1,5 @@
 import { sql } from "@/lib/db";
-import { isBotActive } from "@/lib/settings";
+import { isBotActive, getAiModel } from "@/lib/settings";
 import { ensureDatabaseSchema } from "@/lib/schema";
 import { getRetentionDays } from "@/lib/retention";
 import { calculateCategoryStats, extractTrendingTopics } from "@/lib/analytics";
@@ -20,6 +20,7 @@ export default async function Page() {
   let sources: RssSourceItem[] = [];
   let keywords: KeywordItem[] = [];
   let retentionDays: number | null = 7;
+  let aiModel = "yet/deepseek-v4.1-flash";
   const categoryBreakdown: CategoryBreakdownMap = {};
 
   const metrics: MetricStats = {
@@ -34,6 +35,7 @@ export default async function Page() {
   try {
     botActive = await isBotActive();
     retentionDays = await getRetentionDays();
+    aiModel = await getAiModel();
 
     // 1. Ambil artikel berita
     const rows = await sql`
@@ -110,6 +112,7 @@ export default async function Page() {
         initialCategoryStats={categoryStats}
         initialTrendingTopics={trendingTopics}
         initialCategoryBreakdown={categoryBreakdown}
+        initialAiModel={aiModel}
       />
     </main>
   );

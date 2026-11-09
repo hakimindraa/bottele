@@ -1,4 +1,6 @@
 import OpenAI from "openai";
+import { getAiModel } from "@/lib/settings";
+import { detectNewsCategory } from "@/lib/liveSearch";
 
 export interface SummarizeParams {
   title: string;
@@ -18,21 +20,23 @@ export async function summarize({
   url,
   isPriority = false,
 }: SummarizeParams): Promise<SummarizeResult> {
-  const openai = new OpenAI({
-    baseURL: process.env.NINEROUTER_BASE_URL,
-    apiKey: process.env.NINEROUTER_API_KEY,
-  });
-
+  const activeModel = await getAiModel();
   const priorityInstruction = isPriority
     ? "PERINGATAN: Berita ini bertopik prioritas redaksi (HIGH ATTENTION). Tekankan implikasi kritis, potensi skandal, atau dampak struktural terbesar secara mendesak."
     : "";
 
-  const response = await openai.chat.completions.create({
-    model: process.env.NINEROUTER_MODEL || "ag/claude-opus-4-6-thinking",
-    messages: [
-      {
-        role: "system",
-        content: `Kamu adalah jurnalis investigasi senior yang kritis, tegas, berani membongkar fakta, dan bernada lugas serta mendesak (hard-hitting investigative journalist).
+  try {
+    const openai = new OpenAI({
+      baseURL: process.env.NINEROUTER_BASE_URL || "http://node7.botkeep.cloud:40022/v1",
+      apiKey: process.env.NINEROUTER_API_KEY,
+    });
+
+    const response = await openai.chat.completions.create({
+      model: activeModel,
+      messages: [
+        {
+          role: "system",
+          content: `Kamu adalah jurnalis investigasi senior yang kritis, tegas, berani membongkar fakta, dan bernada lugas serta mendesak (hard-hitting investigative journalist).
 Tugasmu adalah menganalisis dan membedah berita secara tajam dalam bahasa Indonesia, serta mengelompokkan ke kategori liputan yang tepat.
 ${priorityInstruction}
 
@@ -45,34 +49,51 @@ Pedoman penulisan:
   "summary": "Isi analisis investigatif 3-4 kalimat...",
   "category": "LINGKUNGAN"
 }`,
-      },
-      {
-        role: "user",
-        content: `Judul: ${title}\nURL: ${url}\nKonten/Fakta Sumber:\n${snippet}`,
-      },
-    ],
-  });
+        },
+        {
+          role: "user",
+          content: `Judul: ${title}\nURL: ${url}\nKonten/Fakta Sumber:\n${snippet}`,
+        },
+      ],
+    });
 
-  const raw = response.choices[0]?.message?.content?.trim() ?? "";
+    const raw = response.choices[0]?.message?.content?.trim() ?? "";
 
-  try {
-    // Cari blok JSON jika ada backticks
+    // Parse respons JSON dari LLM
     const jsonMatch = raw.match(/\{[\s\S]*\}/);
     if (jsonMatch) {
       const parsed = JSON.parse(jsonMatch[0]);
-      if (parsed.summary) {
+      if (parsed.summary && parsed.summary.trim()) {
         return {
           summary: String(parsed.summary).trim(),
-          category: String(parsed.category || "UMUM").toUpperCase(),
+          category: String(parsed.category || detectNewsCategory(`${title} ${snippet}`)).toUpperCase(),
         };
       }
     }
-  } catch {
-    // Abaikan error parsing dan fallback
+
+    if (raw && raw.length > 20) {
+      return {
+        summary: raw,
+        category: detectNewsCategory(`${title} ${snippet}`),
+      };
+    }
+  } catch (aiError) {
+    // JARING PENGAMAN (OPSI B): Tangani kegagalan AI secara elegan agar pipeline bot tidak macet
+    console.warn(`[AI Summarize Fallback] Model ${activeModel} gagal/offline (${aiError instanceof Error ? aiError.message : String(aiError)}). Menggunakan fallback draf cerdas.`);
   }
 
+  // Fallback cerdas: Deteksi kategori via kata kunci & susun ringkasan dari snippet asli
+  const fallbackCat = detectNewsCategory(`${title} ${snippet}`);
+  const cleanSnippet = snippet
+    ? snippet.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim()
+    : "";
+
+  const emergencySummary = cleanSnippet.length > 30
+    ? `${cleanSnippet} (Laporan liputan intelijen dipantau via radar redaksi).`
+    : `Laporan terkini mengenai ${title}. Informasi lengkap terlampir pada tautan sumber berita asli.`;
+
   return {
-    summary: raw || "Analisis fakta belum tersedia.",
-    category: "UMUM",
+    summary: emergencySummary,
+    category: fallbackCat,
   };
 }
